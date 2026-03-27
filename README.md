@@ -25,7 +25,7 @@ else sits on.
 ## Quick Start
 
 ```bash
-git clone https://github.com/<you>/lua-regolith.git
+git clone https://github.com/JBlaschke/lua-regolith.git
 cd lua-regolith
 
 make download
