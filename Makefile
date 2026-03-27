@@ -31,6 +31,10 @@
 #
 # =============================================================================
 
+# Force POSIX shell for recipes (critical on systems where SHELL may be
+# inherited from the environment, e.g. fish shell on macOS).
+SHELL := /bin/sh
+
 # ---- User-configurable knobs ------------------------------------------------
 
 PREFIX     ?= /usr/local
@@ -125,6 +129,10 @@ endif
 # =============================================================================
 
 .PHONY: all install clean distclean download verify test static-lua
+
+# Disable all built-in implicit rules and suffixes
+.SUFFIXES:
+MAKEFLAGS += --no-builtin-rules
 
 all: lua liblua-shared luaposix luv lfs lpeg luaterm dkjson
 
@@ -267,9 +275,9 @@ LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
 LUA_BIN   := $(BUILD)/lua
 LUAC_BIN  := $(BUILD)/luac
 
-LUA_LIB_C_FILES = $(filter-out $(LUA_SRC)/lua.c $(LUA_SRC)/luac.c, \
-                    $(wildcard $(LUA_SRC)/*.c))
-LUA_LIB_OBJS    = $(patsubst $(LUA_SRC)/%.c,$(BUILD)/lua-obj/%.o,$(LUA_LIB_C_FILES))
+# Note: Source files are discovered at recipe time via shell globs,
+# NOT at Make parse time.  This is intentional — the source directory
+# doesn't exist until extraction runs.
 
 $(BUILD)/.lua-patched: $(LUA_DIR)
 	@mkdir -p $(BUILD)
@@ -351,9 +359,6 @@ liblua-shared: $(LUA_SO)
 # =============================================================================
 # 2. LUAPOSIX
 # =============================================================================
-
-LUAPOSIX_C_SRCS = $(wildcard $(LUAPOSIX_DIR)/ext/posix/*.c)
-LUAPOSIX_OBJS   = $(patsubst $(LUAPOSIX_DIR)/ext/posix/%.c,$(BUILD)/luaposix-obj/%.o,$(LUAPOSIX_C_SRCS))
 
 $(BUILD)/luaposix-obj/.built: $(LUA_A) $(LUAPOSIX_DIR)
 	@mkdir -p $(BUILD)/luaposix-obj
@@ -480,9 +485,6 @@ lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(SHARED_EXT)
 # =============================================================================
 # 5. LPEG
 # =============================================================================
-
-LPEG_C_SRCS = $(wildcard $(LPEG_DIR)/lp*.c)
-LPEG_OBJS   = $(patsubst $(LPEG_DIR)/%.c,$(BUILD)/lpeg-obj/%.o,$(LPEG_C_SRCS))
 
 $(BUILD)/lpeg-obj/.built: $(LUA_A) $(LPEG_DIR)
 	@mkdir -p $(BUILD)/lpeg-obj
