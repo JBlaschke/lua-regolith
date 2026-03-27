@@ -47,7 +47,9 @@ LUA_VER       := 5.4.7
 LUAPOSIX_VER  := 36.2.1
 LUV_VER       := 1.48.0-2
 LIBUV_VER     := 1.48.0
-LFS_VER       := 1.8.0
+LFS_VER       := 1.9.0
+# luafilesystem uses underscores in tags: v1.9.0 → v1_9_0
+LFS_TAG       := v$(subst .,_,$(LFS_VER))
 LPEG_VER      := 1.1.0
 LUATERM_VER   := 0.8
 DKJSON_VER    := 2.8
@@ -79,8 +81,8 @@ LUV_URL       := https://github.com/luvit/luv/releases/download/$(LUV_VER)/luv-$
 LIBUV_DIR     := libuv-v$(LIBUV_VER)
 LIBUV_URL     := https://github.com/libuv/libuv/archive/refs/tags/v$(LIBUV_VER).tar.gz
 
-LFS_DIR       := luafilesystem-$(LFS_VER)
-LFS_URL       := https://github.com/lunarmodules/luafilesystem/archive/refs/tags/v$(LFS_VER).tar.gz
+LFS_DIR       := luafilesystem-$(LFS_TAG)
+LFS_URL       := https://github.com/lunarmodules/luafilesystem/archive/$(LFS_TAG)/luafilesystem-$(LFS_TAG).tar.gz
 
 LPEG_DIR      := lpeg-$(LPEG_VER)
 LPEG_URL      := http://www.inf.puc-rio.br/~roberto/lpeg/lpeg-$(LPEG_VER).tar.gz
@@ -300,46 +302,46 @@ LUA_LIB_OBJS    = $(patsubst $(LUA_SRC)/%.c,$(BUILD)/lua-obj/%.o,$(LUA_LIB_C_FIL
 $(BUILD)/.lua-patched: $(LUA_DIR)
 	@mkdir -p $(BUILD)
 	@if ! grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
-	  cat >> $(LUA_SRC)/luaconf.h <<'BUNDLED_EOF'
-
-/* ---- BUNDLED_LUA_PREFIX_OVERRIDE ---- */
-/* Appended by lua-regolith Makefile.  Overrides default paths so     */
-/* that the interpreter finds modules installed under PREFIX.          */
-/* This approach is version-resilient: it works regardless of the     */
-/* formatting or layout of the stock luaconf.h.                        */
-
-#ifdef LUA_ROOT
-#undef LUA_ROOT
-#endif
-#define LUA_ROOT "$(PREFIX)/"
-
-#ifdef LUA_LDIR
-#undef LUA_LDIR
-#endif
-#define LUA_LDIR LUA_ROOT "share/lua/$(LUA_SHORT)/"
-
-#ifdef LUA_CDIR
-#undef LUA_CDIR
-#endif
-#define LUA_CDIR LUA_ROOT "lib/lua/$(LUA_SHORT)/"
-
-#ifdef LUA_PATH_DEFAULT
-#undef LUA_PATH_DEFAULT
-#endif
-#define LUA_PATH_DEFAULT \
-  LUA_LDIR "?.lua;" LUA_LDIR "?/init.lua;" \
-  LUA_CDIR "?.lua;" LUA_CDIR "?/init.lua;" \
-  "./?.lua;./?/init.lua"
-
-#ifdef LUA_CPATH_DEFAULT
-#undef LUA_CPATH_DEFAULT
-#endif
-#define LUA_CPATH_DEFAULT \
-  LUA_CDIR "?.$(SHARED_EXT);" LUA_CDIR "loadall.$(SHARED_EXT);" \
-  "./?.$(SHARED_EXT)"
-
-/* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ---- */
-BUNDLED_EOF
+	  { \
+	    echo ''; \
+	    echo '/* ---- BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
+	    echo '/* Appended by lua-regolith Makefile.  Overrides default paths so     */'; \
+	    echo '/* that the interpreter finds modules installed under PREFIX.          */'; \
+	    echo '/* This approach is version-resilient: it works regardless of the     */'; \
+	    echo '/* formatting or layout of the stock luaconf.h.                        */'; \
+	    echo ''; \
+	    echo '#ifdef LUA_ROOT'; \
+	    echo '#undef LUA_ROOT'; \
+	    echo '#endif'; \
+	    echo '#define LUA_ROOT "$(PREFIX)/"'; \
+	    echo ''; \
+	    echo '#ifdef LUA_LDIR'; \
+	    echo '#undef LUA_LDIR'; \
+	    echo '#endif'; \
+	    echo '#define LUA_LDIR LUA_ROOT "share/lua/$(LUA_SHORT)/"'; \
+	    echo ''; \
+	    echo '#ifdef LUA_CDIR'; \
+	    echo '#undef LUA_CDIR'; \
+	    echo '#endif'; \
+	    echo '#define LUA_CDIR LUA_ROOT "lib/lua/$(LUA_SHORT)/"'; \
+	    echo ''; \
+	    echo '#ifdef LUA_PATH_DEFAULT'; \
+	    echo '#undef LUA_PATH_DEFAULT'; \
+	    echo '#endif'; \
+	    echo '#define LUA_PATH_DEFAULT \\'; \
+	    echo '  LUA_LDIR "?.lua;" LUA_LDIR "?/init.lua;" \\'; \
+	    echo '  LUA_CDIR "?.lua;" LUA_CDIR "?/init.lua;" \\'; \
+	    echo '  "./?.lua;./?/init.lua"'; \
+	    echo ''; \
+	    echo '#ifdef LUA_CPATH_DEFAULT'; \
+	    echo '#undef LUA_CPATH_DEFAULT'; \
+	    echo '#endif'; \
+	    echo '#define LUA_CPATH_DEFAULT \\'; \
+	    echo '  LUA_CDIR "?.$(SHARED_EXT);" LUA_CDIR "loadall.$(SHARED_EXT);" \\'; \
+	    echo '  "./?.$(SHARED_EXT)"'; \
+	    echo ''; \
+	    echo '/* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
+	  } >> $(LUA_SRC)/luaconf.h; \
 	fi
 	touch $@
 

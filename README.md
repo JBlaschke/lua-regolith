@@ -13,7 +13,7 @@ else sits on.
 
 ## Bundled modules
 
-| Module     | Type       | Purpose                                     |
+| Module    | Type       | Purpose                                      |
 |-----------|------------|----------------------------------------------|
 | luaposix  | C + Lua    | POSIX bindings (required by Lmod)            |
 | luv       | C (cmake)  | libuv bindings for async I/O                 |
@@ -204,14 +204,14 @@ apk add build-base cmake wget readline-dev readline-static linux-headers python3
 
 ## Configuration
 
-| Variable        | Default      | Purpose                |
-|----------------|-------------|------------------------|
-| `PREFIX`       | `/usr/local` | Install location       |
+| Variable      | Default      | Purpose                |
+|---------------|--------------|------------------------|
+| `PREFIX`      | `/usr/local` | Install location       |
 | `LUA_VER`     | `5.4.7`      | Lua version            |
 | `LUAPOSIX_VER`| `36.2.1`     | luaposix version       |
 | `LUV_VER`     | `1.48.0-2`   | luv version            |
 | `LIBUV_VER`   | `1.48.0`     | libuv version          |
-| `LFS_VER`     | `1.8.0`      | luafilesystem version  |
+| `LFS_VER`     | `1.9.0`      | luafilesystem version  |
 | `LPEG_VER`    | `1.1.0`      | lpeg version           |
 | `LUATERM_VER` | `0.8`        | lua-term version       |
 | `DKJSON_VER`  | `2.8`        | dkjson version         |
