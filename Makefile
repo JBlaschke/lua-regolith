@@ -206,9 +206,9 @@ verify: download
 	  "luaterm-$(LUATERM_VER).tar.gz $(LUATERM_SHA256)" \
 	  "$(DKJSON_FILE) $(DKJSON_SHA256)" \
 	; do \
-	  file=$$(echo $$pair | cut -d' ' -f1); \
-	  expect=$$(echo $$pair | cut -d' ' -f2); \
-	  if [ -z "$$expect" ]; then \
+	  file=$(echo $pair | awk '{print $1}'); \
+	  expect=$(echo $pair | awk '{print $2}'); \
+	  if [ -z "$expect" ]; then \
 	    echo "SKIP  $$file (no checksum configured)"; \
 	    continue; \
 	  fi; \
