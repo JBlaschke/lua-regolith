@@ -2,7 +2,7 @@
 # lua-regolith — Makefile.lite (zero cmake/autoconf build)
 # =============================================================================
 #
-# https://github.com/<you>/lua-regolith
+# https://github.com/JBlaschke/lua-regolith
 #
 # Build dependencies:  cc, make, ar  (that's it)
 # Optional:            ranlib, install, wget
