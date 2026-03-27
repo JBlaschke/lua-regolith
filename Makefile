@@ -553,12 +553,12 @@ $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
 	echo ''; \
 	echo '/* Forward declarations */'; \
 	for obj in $(BUILD)/luaposix-obj/*.o; do \
-	  nm -g "$$obj" 2>/dev/null \
+	  nm -g "${obj}" 2>/dev/null \
 	    | grep ' T.*$(NM_LUAOPEN_RE)' \
-	    | awk '{print $$NF}' \
+	    | awk '{print $NF}' \
 	    | sed 's/^_//' \
 	    | while read sym; do \
-	      echo "int $$sym(lua_State *L);"; \
+	      echo "int ${sym}(lua_State *L);"; \
 	    done; \
 	done; \
 	echo 'int luaopen_luv(lua_State *L);'; \
@@ -568,13 +568,13 @@ $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
 	echo ''; \
 	echo 'static const struct { const char *name; lua_CFunction func; } bundled_modules[] = {'; \
 	for obj in $(BUILD)/luaposix-obj/*.o; do \
-	  nm -g "$$obj" 2>/dev/null \
+	  nm -g "${obj}" 2>/dev/null \
 	    | grep ' T.*$(NM_LUAOPEN_RE)' \
-	    | awk '{print $$NF}' \
+	    | awk '{print $NF}' \
 	    | sed 's/^_//' \
 	    | while read sym; do \
-	      modname=$$(echo "$$sym" | sed 's/^luaopen_//' | sed 's/_/./g'); \
-	      echo "  { \"$$modname\", $$sym },"; \
+	      modname=$(echo "${sym}" | sed 's/^luaopen_//' | sed 's/_/./g'); \
+	      echo "  { \"${modname}\", ${sym} },"; \
 	    done; \
 	done; \
 	echo '  { "luv", luaopen_luv },'; \
@@ -796,7 +796,7 @@ export TEST_SCRIPT
 test: $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(SHARED_EXT) \
       $(BUILD)/lfs.$(SHARED_EXT) $(BUILD)/lpeg.$(SHARED_EXT) \
       $(BUILD)/term_core.$(SHARED_EXT) $(DKJSON_FILE)
-	@echo "$$TEST_SCRIPT" > $(BUILD)/test_bundled.lua
+	@echo "${TEST_SCRIPT}" > $(BUILD)/test_bundled.lua
 	$(TEST_LUA) $(BUILD)/test_bundled.lua
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  echo ""; echo "=== Testing static binary ==="; echo ""; \
@@ -819,9 +819,9 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	install -m 755 $(LUA_SO) $(PREFIX)/lib/liblua.$(SHARED_EXT)
 	cd $(PREFIX)/lib && ln -sf liblua.$(SHARED_EXT) liblua$(LUA_SHORT).$(SHARED_EXT)
 	@for h in $(LUA_SRC)/*.h $(LUA_SRC)/*.hpp; do \
-	  [ -f "$$h" ] || continue; \
-	  install -m 644 "$$h" $(PREFIX)/include/; \
-	  install -m 644 "$$h" $(PREFIX)/include/lua$(LUA_SHORT)/; \
+	  [ -f "${h}" ] || continue; \
+	  install -m 644 "${h}" $(PREFIX)/include/; \
+	  install -m 644 "${h}" $(PREFIX)/include/lua$(LUA_SHORT)/; \
 	done
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  install -m 755 $(STATIC_LUA_BIN) $(PREFIX)/bin/lua-static; \
@@ -832,16 +832,16 @@ install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	install -m 644 $(BUILD)/libluaposix.a $(PREFIX)/lib/
 	@cd $(BUILD)/luaposix-so && \
 	  find . -name '*.$(SHARED_EXT)' | while read f; do \
-	    dir=$(PREFIX)/lib/lua/$(LUA_SHORT)/$$(dirname "$$f"); \
-	    install -d "$$dir"; \
-	    install -m 755 "$$f" "$$dir/$$(basename $$f)"; \
+	    dir=$(PREFIX)/lib/lua/$(LUA_SHORT)/$(dirname "${f}"); \
+	    install -d "${dir}"; \
+	    install -m 755 "${f}" "${dir}/$(basename ${f})"; \
 	  done
 	@if [ -d $(LUAPOSIX_DIR)/lib/posix ]; then \
 	  cd $(LUAPOSIX_DIR)/lib && \
 	  find posix -name '*.lua' | while read f; do \
-	    dir=$(PREFIX)/share/lua/$(LUA_SHORT)/$$(dirname "$$f"); \
-	    install -d "$$dir"; \
-	    install -m 644 "$$f" "$$dir/$$(basename $$f)"; \
+	    dir=$(PREFIX)/share/lua/$(LUA_SHORT)/$(dirname "${f}"); \
+	    install -d "${dir}"; \
+	    install -m 644 "${f}" "${dir}/$(basename ${f})"; \
 	  done; \
 	fi
 
@@ -876,8 +876,8 @@ install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(SHARED_EXT)
 	install -m 755 $(BUILD)/term_core.$(SHARED_EXT) \
 	  $(PREFIX)/lib/lua/$(LUA_SHORT)/term/core.$(SHARED_EXT)
 	@for f in $(LUATERM_DIR)/term/*.lua; do \
-	  [ -f "$$f" ] || continue; \
-	  install -m 644 "$$f" $(PREFIX)/share/lua/$(LUA_SHORT)/term/; \
+	  [ -f "${f}" ] || continue; \
+	  install -m 644 "${f}" $(PREFIX)/share/lua/$(LUA_SHORT)/term/; \
 	done
 
 install-dkjson: $(DKJSON_FILE)
