@@ -13,13 +13,13 @@ else sits on.
 
 ## Bundled modules
 
-| Module     | Type       | Purpose                                      |
+| Module     | Type       | Purpose                                     |
 |-----------|------------|----------------------------------------------|
 | luaposix  | C + Lua    | POSIX bindings (required by Lmod)            |
 | luv       | C (cmake)  | libuv bindings for async I/O                 |
 | lfs       | C (1 file) | Filesystem operations (required by Lmod)     |
 | lpeg      | C          | PEG parsing library (used by Lmod)           |
-| lua-term  | C + Lua    | Terminal detection (used by Lmod for width)   |
+| lua-term  | C + Lua    | Terminal detection (used by Lmod for width)  |
 | dkjson    | pure Lua   | JSON encode/decode (used by Lmod)            |
 
 ## Quick Start
