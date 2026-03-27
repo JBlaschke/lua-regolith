@@ -302,8 +302,8 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	  cat >> $(LUA_SRC)/luaconf.h <<'BUNDLED_EOF'
 
 /* ---- BUNDLED_LUA_PREFIX_OVERRIDE ---- */
-/* Appended by the bundled-lua Makefile.  Overrides default paths     */
-/* so that the interpreter finds modules installed under PREFIX.       */
+/* Appended by lua-regolith Makefile.  Overrides default paths so     */
+/* that the interpreter finds modules installed under PREFIX.          */
 /* This approach is version-resilient: it works regardless of the     */
 /* formatting or layout of the stock luaconf.h.                        */
 
@@ -732,7 +732,7 @@ local function test(name, fn)
 end
 
 print("")
-print("=== Bundled Lua Smoke Tests ===")
+print("=== lua-regolith Smoke Tests ===")
 print("  Lua version: " .. _VERSION)
 print("")
 
@@ -940,8 +940,8 @@ install-pkgconfig:
 	echo 'libdir=$${exec_prefix}/lib'; \
 	echo 'includedir=$${prefix}/include'; \
 	echo ''; \
-	echo 'Name: Lua $(LUA_SHORT) (bundled)'; \
-	echo 'Description: Lua $(LUA_SHORT) with bundled luaposix, luv, lfs, lpeg, lua-term, dkjson'; \
+	echo 'Name: lua-regolith $(LUA_SHORT)'; \
+	echo 'Description: lua-regolith — Lua $(LUA_SHORT) with bundled luaposix, luv, lfs, lpeg, lua-term, dkjson'; \
 	echo 'Version: $(LUA_VER)'; \
 	echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
 	echo 'Libs.private: -lpthread'; \
