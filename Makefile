@@ -47,8 +47,8 @@ LUA_VER       := 5.4.7
 LUAPOSIX_VER  := 36.2.1
 LUV_VER       := 1.48.0-2
 LIBUV_VER     := 1.48.0
-LFS_VER       := 1.9.0
-# luafilesystem uses underscores in tags: v1.9.0 → v1_9_0
+LFS_VER       := 1.8.0
+# luafilesystem uses underscores in tags: v1.8.0 → v1_8_0
 LFS_TAG       := v$(subst .,_,$(LFS_VER))
 LPEG_VER      := 1.1.0
 LUATERM_VER   := 0.8
@@ -82,7 +82,7 @@ LIBUV_DIR     := libuv-v$(LIBUV_VER)
 LIBUV_URL     := https://github.com/libuv/libuv/archive/refs/tags/v$(LIBUV_VER).tar.gz
 
 LFS_DIR       := luafilesystem-$(LFS_TAG)
-LFS_URL       := https://github.com/lunarmodules/luafilesystem/archive/$(LFS_TAG)/luafilesystem-$(LFS_TAG).tar.gz
+LFS_URL       := https://github.com/lunarmodules/luafilesystem/archive/refs/tags/$(LFS_TAG).tar.gz
 
 LPEG_DIR      := lpeg-$(LPEG_VER)
 LPEG_URL      := http://www.inf.puc-rio.br/~roberto/lpeg/lpeg-$(LPEG_VER).tar.gz
@@ -612,7 +612,7 @@ $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
 	echo '    lua_setfield(L, -2, bundled_modules[i].name);'; \
 	echo '  }'; \
 	echo '  lua_pop(L, 1);'; \
-	echo '}'; \
+	echo '}';
 
 # ---- Patched linit.c (derived from the REAL linit.c) -----------------------
 #
@@ -948,4 +948,4 @@ install-pkgconfig:
 	echo 'Version: $(LUA_VER)'; \
 	echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
 	echo 'Libs.private: -lpthread'; \
-	echo 'Cflags: -I$${includedir}'; \
+	echo 'Cflags: -I${includedir}';
