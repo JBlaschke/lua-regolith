@@ -3,7 +3,7 @@
 # lua-regolith — The foundation layer for your Lua environment
 # =============================================================================
 #
-# https://github.com/<you>/lua-regolith
+# https://github.com/JBlaschke/lua-regolith
 #
 # Builds a self-contained Lua installation with luaposix, luv, lfs,
 # lpeg, lua-term, and dkjson.  Suitable for running Lmod, creating
@@ -260,16 +260,6 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 # =============================================================================
 # 1. LUA
 # =============================================================================
-#
-# KEY DESIGN: The source file list is discovered dynamically from the
-# extracted tree.  Every .c in src/ except lua.c and luac.c is a library
-# source.  This means a Lua version bump (even to 5.5) just works —
-# new files are picked up, removed files are dropped.
-#
-# The luaconf.h patch uses #undef / #define appended to the END of the
-# file, so it doesn't depend on matching any particular formatting
-# inside the stock luaconf.h.
-# =============================================================================
 
 LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
@@ -277,27 +267,9 @@ LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
 LUA_BIN   := $(BUILD)/lua
 LUAC_BIN  := $(BUILD)/luac
 
-# --- Dynamic source discovery ------------------------------------------------
-# After extraction, discover every .c file in src/ except the two mains.
-# This is evaluated lazily (= not :=) so it works even before extraction
-# on first pass — the actual file list is resolved when the targets need it.
-
 LUA_LIB_C_FILES = $(filter-out $(LUA_SRC)/lua.c $(LUA_SRC)/luac.c, \
                     $(wildcard $(LUA_SRC)/*.c))
 LUA_LIB_OBJS    = $(patsubst $(LUA_SRC)/%.c,$(BUILD)/lua-obj/%.o,$(LUA_LIB_C_FILES))
-
-# --- Patch luaconf.h --------------------------------------------------------
-#
-# Instead of trying to sed-match internal formatting (which varies between
-# Lua versions), we APPEND overrides to the end of luaconf.h.  The C
-# preprocessor sees the last #define, so our values win.
-#
-# We override LUA_ROOT (the install prefix) and, as a safety net, also
-# override LUA_LDIR and LUA_CDIR with explicit paths.  This works for
-# any Lua version that uses these macros (5.1 through 5.4+).
-#
-# For Lua versions that don't define these macros (hypothetical), the
-# extra #undefs are harmless.
 
 $(BUILD)/.lua-patched: $(LUA_DIR)
 	@mkdir -p $(BUILD)
@@ -305,10 +277,7 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	  { \
 	    echo ''; \
 	    echo '/* ---- BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
-	    echo '/* Appended by lua-regolith Makefile.  Overrides default paths so     */'; \
-	    echo '/* that the interpreter finds modules installed under PREFIX.          */'; \
-	    echo '/* This approach is version-resilient: it works regardless of the     */'; \
-	    echo '/* formatting or layout of the stock luaconf.h.                        */'; \
+	    echo '/* Appended by lua-regolith Makefile. */'; \
 	    echo ''; \
 	    echo '#ifdef LUA_ROOT'; \
 	    echo '#undef LUA_ROOT'; \
@@ -544,19 +513,6 @@ dkjson: $(DKJSON_FILE)
 # =============================================================================
 # 8. FULLY STATIC LUA INTERPRETER  (bonus)
 # =============================================================================
-#
-# KEY DESIGN for version resilience:
-#
-#   a) preload_modules.c — auto-generated from nm, same as before.
-#
-#   b) linit_bundled.c — instead of hardcoding the standard library
-#      table, we COPY the stock linit.c from the source tree and
-#      PATCH it with sed to insert our preload call.  This means if
-#      Lua 5.5 adds a new standard library (e.g. luaopen_newlib),
-#      it's automatically included because we use THEIR linit.c.
-#
-#   c) Source file list — derived dynamically, same as the main build.
-# =============================================================================
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 
@@ -612,76 +568,51 @@ $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
 	echo '    lua_setfield(L, -2, bundled_modules[i].name);'; \
 	echo '  }'; \
 	echo '  lua_pop(L, 1);'; \
-	echo '}';
+	echo '}'
 
 # ---- Patched linit.c (derived from the REAL linit.c) -----------------------
 #
-# Strategy: copy the stock linit.c, then:
-#   1. Add a forward declaration of preload_bundled_modules()
-#   2. Insert a call to it at the end of the luaL_openlibs function body,
-#      right before the closing brace.
+# We copy the stock linit.c and use awk to:
+#   1. Add a forward declaration after the last #include
+#   2. Insert preload_bundled_modules(L); before the closing } of luaL_openlibs
 #
-# We find the closing "}" of luaL_openlibs by looking for the LAST "}"
-# in the file (linit.c is a small file with luaL_openlibs as the only
-# or last function).  We insert our call just before it.
-#
-# This is deliberately conservative: if the sed fails to match, you get
-# the stock linit.c (modules just won't be preloaded in the static binary,
-# but the interpreter still works — it just falls back to .so loading).
+# This avoids sed 'a\' which conflicts with Make's backslash handling,
+# and avoids requiring python3.
 
 $(BUILD)/static-lua/linit_bundled.c: $(BUILD)/.lua-patched $(BUILD)/preload_modules.c
 	@mkdir -p $(BUILD)/static-lua
-	@cp $(LUA_SRC)/linit.c $@
-	@# Step 1: Add the forward declaration after the last #include
-	@#   Find the line number of the last #include and insert after it
-	@last_inc=$$(grep -n '#include' $@ | tail -1 | cut -d: -f1); \
-	if [ -n "$$last_inc" ]; then \
-	  sed -i.bak "$${last_inc}a\\
-extern void preload_bundled_modules(lua_State *L);" $@; \
-	fi
-	@# Step 2: Insert preload call before the closing brace of luaL_openlibs.
-	@#   We find "luaL_openlibs" then find the next "}" after it and insert before.
-	@#   Use a Python one-liner for reliability across sed variants.
-	@python3 -c " \
-import sys; \
-lines = open('$@').readlines(); \
-found_fn = False; \
-insert_at = None; \
-for i, line in enumerate(lines): \
-    if 'luaL_openlibs' in line and '(' in line: \
-        found_fn = True; \
-    if found_fn and line.strip() == '}': \
-        insert_at = i; \
-        break; \
-if insert_at is not None: \
-    lines.insert(insert_at, '  preload_bundled_modules(L);\n'); \
-open('$@', 'w').writelines(lines); \
-" 2>/dev/null || \
-	  echo "Warning: python3 not found; static binary won't preload bundled modules"
-	@rm -f $@.bak
+	@awk ' \
+	  /^#include/ { last_inc = NR } \
+	  { lines[NR] = $$0 } \
+	  END { \
+	    for (i = 1; i <= NR; i++) { \
+	      print lines[i]; \
+	      if (i == last_inc) \
+	        print "extern void preload_bundled_modules(lua_State *L);"; \
+	    } \
+	  }' $(LUA_SRC)/linit.c > $@.tmp1
+	@awk ' \
+	  /luaL_openlibs/ { in_fn = 1 } \
+	  in_fn && /^}/ { print "  preload_bundled_modules(L);"; in_fn = 0 } \
+	  { print }' $@.tmp1 > $@
+	@rm -f $@.tmp1
 
 # ---- Compile static binary using the real lua.c ----------------------------
-#
-# Source list derived dynamically: every .c in src/ except lua.c, luac.c,
-# and linit.c (we supply our patched version).
 
 $(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.c \
                     $(BUILD)/libluaposix.a $(BUILD)/libluv.a $(LIBUV_A) \
                     $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a \
                     $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua/obj
-	@# Compile every Lua lib source except lua.c, luac.c, linit.c
 	@for src in $(filter-out $(LUA_SRC)/lua.c $(LUA_SRC)/luac.c $(LUA_SRC)/linit.c, \
 	              $(wildcard $(LUA_SRC)/*.c)); do \
 	  base=$$(basename $$src .c); \
 	  $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
 	    -c -o $(BUILD)/static-lua/obj/$$base.o $$src; \
 	done
-	@# Compile patched linit
 	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
 	  -c -o $(BUILD)/static-lua/obj/linit_bundled.o \
 	  $(BUILD)/static-lua/linit_bundled.c
-	@# Compile preload registration
 	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
 	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
 	  -I$(CURDIR)/$(LIBUV_DIR)/include \
@@ -689,11 +620,9 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.
 	  -I$(CURDIR)/$(LPEG_DIR) \
 	  -c -o $(BUILD)/static-lua/obj/preload_modules.o \
 	  $(BUILD)/preload_modules.c
-	@# Build static liblua-bundled.a
 	$(AR) rcs $(BUILD)/static-lua/liblua-bundled.a \
 	  $(BUILD)/static-lua/obj/*.o
 	$(RANLIB) $(BUILD)/static-lua/liblua-bundled.a
-	@# Link the real lua.c against everything
 	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) \
 	  -I$(LUA_SRC) \
 	  -o $@ \
@@ -855,8 +784,6 @@ test: $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(SHARED_EXT) \
 # =============================================================================
 # 10. INSTALL
 # =============================================================================
-#
-# Headers are installed dynamically too: every .h and .hpp in src/.
 
 .PHONY: install-lua install-luaposix install-luv install-lfs install-lpeg \
         install-luaterm install-dkjson install-pkgconfig
@@ -868,7 +795,6 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	install -m 644 $(LUA_A) $(PREFIX)/lib/liblua.a
 	install -m 755 $(LUA_SO) $(PREFIX)/lib/liblua.$(SHARED_EXT)
 	cd $(PREFIX)/lib && ln -sf liblua.$(SHARED_EXT) liblua$(LUA_SHORT).$(SHARED_EXT)
-	@# Install all headers dynamically
 	@for h in $(LUA_SRC)/*.h $(LUA_SRC)/*.hpp; do \
 	  [ -f "$$h" ] || continue; \
 	  install -m 644 "$$h" $(PREFIX)/include/; \
@@ -937,15 +863,16 @@ install-dkjson: $(DKJSON_FILE)
 
 install-pkgconfig:
 	install -d $(PREFIX)/lib/pkgconfig
-	@exec > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pc; \
-	echo 'prefix=$(PREFIX)'; \
-	echo 'exec_prefix=$${prefix}'; \
-	echo 'libdir=$${exec_prefix}/lib'; \
-	echo 'includedir=$${prefix}/include'; \
-	echo ''; \
-	echo 'Name: lua-regolith $(LUA_SHORT)'; \
-	echo 'Description: lua-regolith — Lua $(LUA_SHORT) with bundled luaposix, luv, lfs, lpeg, lua-term, dkjson'; \
-	echo 'Version: $(LUA_VER)'; \
-	echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
-	echo 'Libs.private: -lpthread'; \
-	echo 'Cflags: -I${includedir}';
+	@{ \
+	  echo 'prefix=$(PREFIX)'; \
+	  echo 'exec_prefix=$${prefix}'; \
+	  echo 'libdir=$${exec_prefix}/lib'; \
+	  echo 'includedir=$${prefix}/include'; \
+	  echo ''; \
+	  echo 'Name: lua-regolith $(LUA_SHORT)'; \
+	  echo 'Description: lua-regolith — Lua $(LUA_SHORT) with bundled luaposix, luv, lfs, lpeg, lua-term, dkjson'; \
+	  echo 'Version: $(LUA_VER)'; \
+	  echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
+	  echo 'Libs.private: -lpthread'; \
+	  echo 'Cflags: -I$${includedir}'; \
+	} > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pc
