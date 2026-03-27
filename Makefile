@@ -314,16 +314,27 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	fi
 	touch $@
 
-$(BUILD)/lua-obj/%.o: $(LUA_SRC)/%.c $(BUILD)/.lua-patched
-	@mkdir -p $(BUILD)/lua-obj
-	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -c -o $@ $<
+# Note: We compile in the recipe using shell globs rather than Make
+# wildcard prerequisites.  This is because $(wildcard) is evaluated at
+# Makefile parse time, before extraction has occurred, yielding an empty
+# list.  Shell globs in recipes run after the prerequisite (extraction)
+# has completed.
 
-$(LUA_A): $(LUA_LIB_OBJS)
-	$(AR) rcs $@ $^
+$(BUILD)/lua-obj/.built: $(BUILD)/.lua-patched
+	@mkdir -p $(BUILD)/lua-obj
+	@for src in $(LUA_SRC)/*.c; do \
+	  case $src in */lua.c|*/luac.c) continue;; esac; \
+	  base=$(basename $src .c); \
+	  $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -c -o $(BUILD)/lua-obj/$base.o $src; \
+	done
+	@touch $@
+
+$(LUA_A): $(BUILD)/lua-obj/.built
+	$(AR) rcs $@ $(BUILD)/lua-obj/*.o
 	$(RANLIB) $@
 
-$(LUA_SO): $(LUA_LIB_OBJS)
-	$(CC) $(SHARED_LINK) -o $@ $^ $(LDFLAGS_LUA)
+$(LUA_SO): $(BUILD)/lua-obj/.built
+	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
 $(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_A)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< \
@@ -341,26 +352,31 @@ liblua-shared: $(LUA_SO)
 # 2. LUAPOSIX
 # =============================================================================
 
-LUAPOSIX_C_SRCS := $(wildcard $(LUAPOSIX_DIR)/ext/posix/*.c)
-LUAPOSIX_OBJS   := $(patsubst $(LUAPOSIX_DIR)/ext/posix/%.c,$(BUILD)/luaposix-obj/%.o,$(LUAPOSIX_C_SRCS))
+LUAPOSIX_C_SRCS = $(wildcard $(LUAPOSIX_DIR)/ext/posix/*.c)
+LUAPOSIX_OBJS   = $(patsubst $(LUAPOSIX_DIR)/ext/posix/%.c,$(BUILD)/luaposix-obj/%.o,$(LUAPOSIX_C_SRCS))
 
-$(BUILD)/luaposix-obj/%.o: $(LUAPOSIX_DIR)/ext/posix/%.c $(LUA_A)
+$(BUILD)/luaposix-obj/.built: $(LUA_A) $(LUAPOSIX_DIR)
 	@mkdir -p $(BUILD)/luaposix-obj
-	$(CC) $(CFLAGS) $(SHARED_FLAGS) \
-	  -I$(LUA_SRC) \
-	  -I$(LUAPOSIX_DIR)/ext/include \
-	  -I$(LUAPOSIX_DIR)/ext/posix \
-	  -DPACKAGE='"luaposix"' \
-	  -DVERSION='"$(LUAPOSIX_VER)"' \
-	  -c -o $@ $<
+	@for src in $(LUAPOSIX_DIR)/ext/posix/*.c; do \
+	  [ -f "$src" ] || continue; \
+	  base=$(basename $src .c); \
+	  $(CC) $(CFLAGS) $(SHARED_FLAGS) \
+	    -I$(LUA_SRC) \
+	    -I$(LUAPOSIX_DIR)/ext/include \
+	    -I$(LUAPOSIX_DIR)/ext/posix \
+	    -DPACKAGE='"luaposix"' \
+	    -DVERSION='"$(LUAPOSIX_VER)"' \
+	    -c -o $(BUILD)/luaposix-obj/$base.o $src; \
+	done
+	@touch $@
 
-$(BUILD)/libluaposix.a: $(LUAPOSIX_OBJS)
-	$(AR) rcs $@ $^
+$(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
+	$(AR) rcs $@ $(BUILD)/luaposix-obj/*.o
 	$(RANLIB) $@
 
-$(BUILD)/luaposix-so/.built: $(LUAPOSIX_OBJS)
+$(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@mkdir -p $(BUILD)/luaposix-so
-	@for obj in $(LUAPOSIX_OBJS); do \
+	@for obj in $(BUILD)/luaposix-obj/*.o; do \
 	  sym=$$(nm -g "$$obj" 2>/dev/null \
 	    | grep ' T.*$(NM_LUAOPEN_RE)' \
 	    | head -1 \
@@ -465,19 +481,24 @@ lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(SHARED_EXT)
 # 5. LPEG
 # =============================================================================
 
-LPEG_C_SRCS := $(wildcard $(LPEG_DIR)/lp*.c)
-LPEG_OBJS   := $(patsubst $(LPEG_DIR)/%.c,$(BUILD)/lpeg-obj/%.o,$(LPEG_C_SRCS))
+LPEG_C_SRCS = $(wildcard $(LPEG_DIR)/lp*.c)
+LPEG_OBJS   = $(patsubst $(LPEG_DIR)/%.c,$(BUILD)/lpeg-obj/%.o,$(LPEG_C_SRCS))
 
-$(BUILD)/lpeg-obj/%.o: $(LPEG_DIR)/%.c $(LUA_A) $(LPEG_DIR)
+$(BUILD)/lpeg-obj/.built: $(LUA_A) $(LPEG_DIR)
 	@mkdir -p $(BUILD)/lpeg-obj
-	$(CC) $(CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -I$(LPEG_DIR) -c -o $@ $<
+	@for src in $(LPEG_DIR)/lp*.c; do \
+	  [ -f "$src" ] || continue; \
+	  base=$(basename $src .c); \
+	  $(CC) $(CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -I$(LPEG_DIR) -c -o $(BUILD)/lpeg-obj/$base.o $src; \
+	done
+	@touch $@
 
-$(BUILD)/liblpeg.a: $(LPEG_OBJS)
-	$(AR) rcs $@ $^
+$(BUILD)/liblpeg.a: $(BUILD)/lpeg-obj/.built
+	$(AR) rcs $@ $(BUILD)/lpeg-obj/*.o
 	$(RANLIB) $@
 
-$(BUILD)/lpeg.$(SHARED_EXT): $(LPEG_OBJS) $(LUA_SO)
-	$(CC) $(SHARED_LINK) -o $@ $(LPEG_OBJS) -L$(BUILD) -llua $(LDFLAGS_LUA)
+$(BUILD)/lpeg.$(SHARED_EXT): $(BUILD)/lpeg-obj/.built $(LUA_SO)
+	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lpeg-obj/*.o -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: lpeg
 lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(SHARED_EXT)
@@ -604,11 +625,11 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.
                     $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a \
                     $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua/obj
-	@for src in $(filter-out $(LUA_SRC)/lua.c $(LUA_SRC)/luac.c $(LUA_SRC)/linit.c, \
-	              $(wildcard $(LUA_SRC)/*.c)); do \
-	  base=$$(basename $$src .c); \
+	@for src in $(LUA_SRC)/*.c; do \
+	  case $src in */lua.c|*/luac.c|*/linit.c) continue;; esac; \
+	  base=$(basename $src .c); \
 	  $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
-	    -c -o $(BUILD)/static-lua/obj/$$base.o $$src; \
+	    -c -o $(BUILD)/static-lua/obj/$base.o $src; \
 	done
 	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
 	  -c -o $(BUILD)/static-lua/obj/linit_bundled.o \
