@@ -556,7 +556,7 @@ local function test(name, fn)
   if ok then pass = pass + 1; print("  PASS  " .. name)
   else fail = fail + 1; print("  FAIL  " .. name .. ": " .. tostring(msg)) end
 end
-print("\n=== Bundled Lua Smoke Tests (lite) ===")
+print("\n=== lua-regolith Smoke Tests (lite) ===")
 print("  Lua version: " .. _VERSION .. "\n")
 test("Lua 5.x", function() assert(_VERSION:match("^Lua 5%.")) end)
 test("require posix", function() assert(require("posix")) end)
