@@ -1,0 +1,191 @@
+# ──────────────────────────────────────────────────────────────
+# Build lua-static for every platform combo and attach to the
+# GitHub Release created by the tag push.
+#
+# Platforms:
+#   linux-x86_64   — glibc-latest  (ubuntu-24.04)
+#   linux-x86_64   — glibc-legacy  (ubuntu-20.04, glibc 2.31)
+#   linux-x86_64   — musl          (alpine 3.20, fully static)
+#   linux-arm64    — glibc-latest  (ubuntu-24.04-arm)
+#   linux-arm64    — glibc-legacy  (ubuntu:20.04 container on arm runner)
+#   linux-arm64    — musl          (alpine 3.20 container on arm runner)
+#   macos-arm64    — Apple Silicon (macos-14)
+#   macos-x86_64   — Intel Mac    (macos-13)
+#
+# Trigger: push a tag matching v* (e.g. v1.0.0)
+# ──────────────────────────────────────────────────────────────
+
+name: Build Static Lua
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write          # needed to upload release assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x86_64 ──────────────────────────────────
+          - name:      linux-x86_64-glibc-latest
+            runner:    ubuntu-24.04
+            container: ""
+            deps: >-
+              sudo apt-get update &&
+              sudo apt-get install -y build-essential cmake wget
+              libreadline-dev python3
+            makefile:  Makefile
+
+          - name:      linux-x86_64-glibc-legacy
+            runner:    ubuntu-20.04
+            container: ""
+            deps: >-
+              sudo apt-get update &&
+              sudo apt-get install -y build-essential cmake wget
+              libreadline-dev python3
+            makefile:  Makefile
+
+          - name:      linux-x86_64-musl
+            runner:    ubuntu-24.04
+            container: alpine:3.20
+            deps: >-
+              apk add --no-cache build-base cmake wget readline-dev
+              readline-static linux-headers python3 git
+            makefile:  Makefile
+
+          # ── Linux ARM64 ──────────────────────────────────
+          - name:      linux-arm64-glibc-latest
+            runner:    ubuntu-24.04-arm
+            container: ""
+            deps: >-
+              sudo apt-get update &&
+              sudo apt-get install -y build-essential cmake wget
+              libreadline-dev python3
+            makefile:  Makefile
+
+          # Run an older Ubuntu container on the native ARM
+          # runner to get glibc 2.31 without cross-compilation.
+          - name:      linux-arm64-glibc-legacy
+            runner:    ubuntu-24.04-arm
+            container: ubuntu:20.04
+            deps: >-
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive
+              apt-get install -y build-essential cmake wget
+              libreadline-dev python3 git
+            makefile:  Makefile
+
+          - name:      linux-arm64-musl
+            runner:    ubuntu-24.04-arm
+            container: alpine:3.20
+            deps: >-
+              apk add --no-cache build-base cmake wget readline-dev
+              readline-static linux-headers python3 git
+            makefile:  Makefile
+
+          # ── macOS ─────────────────────────────────────────
+          - name:      macos-arm64
+            runner:    macos-14
+            container: ""
+            deps: >-
+              brew install readline cmake python3
+            makefile:  Makefile
+
+          - name:      macos-x86_64
+            runner:    macos-13
+            container: ""
+            deps: >-
+              brew install readline cmake python3
+            makefile:  Makefile
+
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container || '' }}
+
+    env:
+      PREFIX: ${{ github.workspace }}/lua-regolith
+
+    steps:
+      # ── 0. Dependencies ──────────────────────────────────
+      - name: Install build dependencies
+        run: ${{ matrix.deps }}
+
+      # ── 1. Source ─────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. macOS readline hint ────────────────────────────
+      # Homebrew doesn't link readline into the default search
+      # path because it shadows libedit. Export the paths so
+      # the Makefile finds it.
+      - name: Export readline paths (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          READLINE_PREFIX="$(brew --prefix readline)"
+          {
+            echo "CFLAGS=-I${READLINE_PREFIX}/include"
+            echo "LDFLAGS=-L${READLINE_PREFIX}/lib"
+          } >> "$GITHUB_ENV"
+
+      # ── 3. Build ──────────────────────────────────────────
+      - name: Download sources
+        run: make -f ${{ matrix.makefile }} download
+
+      - name: Build all modules
+        run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" all
+
+      - name: Build static interpreter
+        run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" static-lua
+
+      - name: Run smoke tests
+        run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
+
+      - name: Install
+        run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" install
+
+      # ── 4. Verify ─────────────────────────────────────────
+      - name: Verify lua-static runs
+        run: |
+          echo "--- binary info ---"
+          file "$PREFIX/bin/lua-static" || true
+          echo "--- version ---"
+          "$PREFIX/bin/lua-static" -v
+          echo "--- quick self-test ---"
+          "$PREFIX/bin/lua-static" -e 'print("hello from lua-static")'
+
+      # ── 5. Package ────────────────────────────────────────
+      - name: Create tarball
+        run: |
+          TAG="${GITHUB_REF_NAME}"                          # e.g. v1.0.0
+          ARCHIVE="lua-regolith-${TAG}-${{ matrix.name }}.tar.gz"
+          tar -czf "${GITHUB_WORKSPACE}/${ARCHIVE}" -C "$PREFIX" .
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ARCHIVE }}
+          retention-days: 5
+
+  # ────────────────────────────────────────────────────────────
+  # Collect every tarball and attach them to the GitHub Release
+  # ────────────────────────────────────────────────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Attach assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: artifacts/**/*.tar.gz
