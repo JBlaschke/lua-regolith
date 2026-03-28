@@ -63,21 +63,15 @@ LUATERM_VER   := 0.8
 DKJSON_VER    := 2.8
 
 # SHA-256 checksums (set to empty to skip verification for that file).
-#
-# To populate missing entries after "make download", run:
-#   sha256sum *.tar.gz *.lua   # Linux
-#   shasum -a 256 *.tar.gz *.lua  # macOS
-#
 # Confirmed from official upstream announcements / trusted package repos:
 LUA_SHA256      := 9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30
 LUAPOSIX_SHA256 := 44e5087cd3c47058f9934b90c0017e4cf870b71619f99707dd433074622debb1
-# GitHub auto-generated archive checksums — fill in after running "make download":
-LUV_SHA256      :=
-LIBUV_SHA256    :=
-LFS_SHA256      :=
-LPEG_SHA256     :=
-LUATERM_SHA256  :=
-DKJSON_SHA256   :=
+LUV_SHA256      := 2c3a1ddfebb4f6550293a40ee789f7122e97647eede51511f57203de48c03b7a
+LIBUV_SHA256    := 8c253adb0f800926a6cbd1c6576abae0bc8eb86a4f891049b72f9e5b7dc58f33
+LFS_SHA256      := 1142c1876e999b3e28d1c236bf21ffd9b023018e336ac25120fb5373aade1450
+LPEG_SHA256     := 4b155d67d2246c1ffa7ad7bc466c1ea899bbc40fef0257cc9c03cecbaed4352a
+LUATERM_SHA256  := 0cb270be22dfc262beec2f4ffc66b878ccaf236f537d693fa36c8f578fc51aa6
+DKJSON_SHA256   := eb3bf160688fb395a2db6bc52eeff4f7855a6321d2b41bdc754554d13f4e7d44
 
 # ---- Derived paths ----------------------------------------------------------
 
