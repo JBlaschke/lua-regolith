@@ -426,6 +426,7 @@ $(BUILD)/libluv.a: $(LUA_A) $(LIBUV_A) $(LUV_DIR)
 	  -DLIBUV_LIBRARY=$(LIBUV_A) \
 	  -DBUILD_MODULE=OFF \
 	  -DBUILD_SHARED_LIBS=OFF \
+	  -DBUILD_STATIC_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD) -j$(NPROC)
 	@# luv names the static lib differently depending on version
