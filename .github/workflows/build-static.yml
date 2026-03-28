@@ -144,6 +144,15 @@ jobs:
             echo "LDFLAGS=-L${READLINE_PREFIX}/lib"
           } >> "$GITHUB_ENV"
 
+      # ── Debug libuv symlink (temporary) ─────────────────
+      - name: Debug libuv deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          make -f ${{ matrix.makefile }} download
+          ls -la luv-*/deps/ 2>/dev/null || echo "deps/ dir does not exist"
+          ls -la luv-*/deps/libuv/ 2>/dev/null | head -5 || echo "deps/libuv does not exist"
+          file luv-*/deps/libuv 2>/dev/null || true
+
       # ────────────────────────────────────────────────────
       #  Standard path (native or GitHub-managed container)
       # ────────────────────────────────────────────────────
