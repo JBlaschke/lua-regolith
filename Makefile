@@ -410,31 +410,37 @@ $(BUILD)/libluv.a: $(LUA_A) $(LIBUV_A) $(LUV_DIR)
 	cd $(LUV_BUILD) && $(CMAKE) \
 	  -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)" \
 	  -DCMAKE_BUILD_TYPE=Release \
+	  -DWITH_LUA_ENGINE=Lua \
 	  -DLUA_BUILD_TYPE=System \
 	  -DLUA_INCLUDE_DIR=$(CURDIR)/$(LUA_SRC) \
-	  -DLUA_LIBRARIES=$(LUA_A) \
+	  -DLUA_LIBRARY=$(LUA_A) \
+	  -DLIBUV_BUILDTYPE=External \
 	  -DLIBUV_INCLUDE_DIR=$(CURDIR)/$(LIBUV_DIR)/include \
-	  -DLIBUV_LIBRARIES=$(LIBUV_A) \
+	  -DLIBUV_LIBRARY=$(LIBUV_A) \
 	  -DBUILD_MODULE=OFF \
 	  -DBUILD_SHARED_LIBS=OFF \
-	  -DWITH_SHARED_LIBUV=OFF \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD) -j$(NPROC)
-	cp $(LUV_BUILD)/libluv_a.a $@ 2>/dev/null || cp $(LUV_BUILD)/libluv.a $@
+	@# luv names the static lib differently depending on version
+	@for f in $(LUV_BUILD)/libluv_a.a $(LUV_BUILD)/libluv.a; do \
+	  if [ -f "$f" ]; then cp "$f" $@; break; fi; \
+	done
+	@test -f $@ || { echo "ERROR: could not find libluv static library"; ls -la $(LUV_BUILD)/lib*.a 2>/dev/null; exit 1; }
 
 $(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO) $(LIBUV_A)
 	@mkdir -p $(LUV_BUILD)/shared
 	cd $(LUV_BUILD)/shared && $(CMAKE) \
 	  -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)" \
 	  -DCMAKE_BUILD_TYPE=Release \
+	  -DWITH_LUA_ENGINE=Lua \
 	  -DLUA_BUILD_TYPE=System \
 	  -DLUA_INCLUDE_DIR=$(CURDIR)/$(LUA_SRC) \
-	  -DLUA_LIBRARIES=$(LUA_SO) \
+	  -DLUA_LIBRARY=$(LUA_SO) \
+	  -DLIBUV_BUILDTYPE=External \
 	  -DLIBUV_INCLUDE_DIR=$(CURDIR)/$(LIBUV_DIR)/include \
-	  -DLIBUV_LIBRARIES=$(LIBUV_A) \
+	  -DLIBUV_LIBRARY=$(LIBUV_A) \
 	  -DBUILD_MODULE=ON \
 	  -DBUILD_SHARED_LIBS=ON \
-	  -DWITH_SHARED_LIBUV=OFF \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD)/shared -j$(NPROC)
 	find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' -exec cp {} $@ \;
