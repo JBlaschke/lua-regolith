@@ -1115,17 +1115,22 @@ end)
 test("luv.pipe()", function()
    if luv.pipe then
       local a, b = luv.pipe()
-      if type(a) == "number" then
-         -- this luv version returns two raw file descriptors
+      if type(a) == "table" then
+         -- returns {read=fd, write=fd} or {read=handle, write=handle}
+         assert(a.read and a.write)
+         if type(a.read) == "number" then
+            unistd.close(a.read)
+            unistd.close(a.write)
+         else
+            a.read:close()
+            a.write:close()
+            luv.run("nowait")
+         end
+      elseif type(a) == "number" then
+         -- two raw file descriptors
          assert(type(b) == "number", "expected two fds")
          unistd.close(a)
          unistd.close(b)
-      elseif type(a) == "table" then
-         -- newer luv: returns {read=handle, write=handle}
-         assert(a.read and a.write)
-         a.read:close()
-         a.write:close()
-         luv.run("nowait")
       else
          -- two userdata handles
          assert(a and b)
