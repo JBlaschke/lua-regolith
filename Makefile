@@ -134,6 +134,18 @@ else
   NM_LUAOPEN_RE := luaopen_
 endif
 
+# ---- luaposix platform defines (mirrors lukefile) ---------------------------
+
+ifeq ($(UNAME_S),Darwin)
+  LUAPOSIX_PLAT_DEFS := -D_DARWIN_C_SOURCE
+else ifeq ($(UNAME_S),Linux)
+  LUAPOSIX_PLAT_DEFS := -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
+else ifeq ($(UNAME_S),FreeBSD)
+  LUAPOSIX_PLAT_DEFS := -D__BSD_VISIBLE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
+else
+  LUAPOSIX_PLAT_DEFS := -D_POSIX_C_SOURCE=200809L
+endif
+
 # Lua C modules are ALWAYS named .so, even on macOS.
 # Lua's package.cpath uses .so on all platforms; only native shared
 # libraries (liblua, libluv) use the platform SHARED_EXT (.dylib on macOS).
@@ -375,16 +387,82 @@ liblua-shared: $(LUA_SO)
 
 # ---- luaposix feature detection ---------------------------------------------
 #
-# luaposix guards several modules behind HAVE_* preprocessor macros that
-# its own build system (luke) would normally define.  Since we compile
-# directly from source, we run small compile-and-link tests instead —
-# same idea as autoconf, zero dependencies beyond cc.
+# luaposix guards several modules behind HAVE_* preprocessor macros that its
+# own build system (luke) would normally define.  Since we compile directly
+# from source, we run small compile-and-link tests instead — same idea as
+# autoconf, zero dependencies beyond cc.
 #
-# Header probes:   try to compile a file that #includes the header.
-# Function probes: try to compile+link a file that calls the function.
+# How it works:
 #
-# The results are written to a config header that is force-included
-# (via -include) into every luaposix compilation unit.
+#   Header probes compile a file that #includes the header in question. If cc
+#   succeeds, the header exists and we emit: #define HAVE_<header> 1.
+#
+#   Function probes compile+link a file that calls the function.  The probe
+#   tries linking with -lcrypt first (needed for crypt(3) on some systems),
+#   then without.  If either succeeds, we emit #define HAVE_<fn> 1.
+#
+#   Both use the same colon-delimited format:
+#     'name:MACRO:header:body'
+#   parsed with ${pair%%:*} / ${pair#*:} shell parameter expansion.
+#
+# The results are written to $(BUILD)/luaposix-config.h, which is
+# force-included (via -include) into every luaposix compilation unit.
+# Because -include is processed before the source file's own #includes,
+# the HAVE_* macros are visible to every guard in luaposix.
+#
+# Both use the same colon-delimited format:
+#     'name:MACRO:header:body'
+#
+#   For example:
+#     'clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; clock_gettime(0, &ts)'
+#
+#   The for loop iterates over each single-quoted string, assigning it
+#   to $pair.  Fields are extracted with POSIX shell parameter expansion:
+#
+#     ${pair%%:*}   — delete the longest :* suffix  → first field  (name)
+#     ${pair#*:}    — delete the shortest *: prefix → everything after
+#                     the first colon (remaining fields)
+#
+#   Applied repeatedly to peel off one field at a time:
+#
+#     pair='clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; ...'
+#     func=${pair%%:*}               → 'clock_gettime'
+#     rest=${pair#*:}                → 'HAVE_CLOCK_GETTIME:time.h:struct timespec ts; ...'
+#     macro=${rest%%:*}              → 'HAVE_CLOCK_GETTIME'
+#     rest=${rest#*:}                → 'time.h:struct timespec ts; ...'
+#     hdr=${rest%%:*}                → 'time.h'
+#     body=${rest#*:}                → 'struct timespec ts; clock_gettime(0, &ts)'
+#
+#   (Header probes only need two fields — name:MACRO — so they use a single
+#   ${pair%%:*} / ${pair#*:} split.)
+#
+#   The do block then builds a minimal C program from $hdr and $body:
+#
+#     #include <time.h>
+#     int main(void) { struct timespec ts; clock_gettime(0, &ts); return 0; }
+#
+#   and tries to compile+link it.  If cc succeeds (exit 0), the feature exists
+#   on this platform and we append  #define HAVE_CLOCK_GETTIME 1 to the config
+#   header.  If cc fails, we skip it — luaposix will simply not register that
+#   function.
+#
+# macOS _POSIX_TIMERS fixup:
+#
+#   luaposix gates clock_gettime behind:
+#     #if defined _POSIX_TIMERS && _POSIX_TIMERS != -1
+#
+#   macOS <unistd.h> unconditionally defines _POSIX_TIMERS as -1 because it
+#   lacks the full POSIX timers API (timer_create, etc.), even though
+#   clock_gettime itself has worked since macOS 10.12. Simply defining
+#   _POSIX_TIMERS in the config header doesn't help — when the source file
+#   later does #include <unistd.h>, the system header redefines it to -1,
+#   clobbering our value.
+#
+#   The fix: the config header itself #includes <unistd.h>, consuming the
+#   include guard.  It then checks whether _POSIX_TIMERS was set to -1 and our
+#   HAVE_CLOCK_GETTIME probe passed; if so, it #undefs _POSIX_TIMERS and
+#   redefines it to 200809L.  When the source file later includes <unistd.h>
+#   again, the include guard makes it a no-op, so our override sticks.
 
 LUAPOSIX_CONFIG_H := $(BUILD)/luaposix-config.h
 
@@ -417,6 +495,7 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  'copy_file_range:HAVE_COPY_FILE_RANGE:unistd.h:copy_file_range(0,0,1,0,1,0)' \
 	  'posix_fadvise:HAVE_POSIX_FADVISE:fcntl.h:posix_fadvise(0,0,0,0)' \
 	  'fdatasync:HAVE_DECL_FDATASYNC:unistd.h:fdatasync(0)' \
+	  'clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; clock_gettime(0, &ts)' \
 	; do \
 	  func=$${pair%%:*}; rest=$${pair#*:}; \
 	  macro=$${rest%%:*}; rest=$${rest#*:}; \
@@ -432,6 +511,18 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  fi; \
 	done
 	@rm -f $(BUILD)/_probe.c $(BUILD)/_probe
+	@# --- macOS _POSIX_TIMERS fixup ---
+	@# macOS <unistd.h> unconditionally defines _POSIX_TIMERS as -1 (it
+	@# lacks timer_create etc.), even though clock_gettime works fine.
+	@# luaposix guards clock_gettime behind _POSIX_TIMERS != -1.
+	@# Fix: pull in <unistd.h> here so its include guard fires later in
+	@# the real source, then override _POSIX_TIMERS if our probe passed.
+	@printf '\n/* macOS _POSIX_TIMERS fixup */\n' >> $@
+	@printf '#include <unistd.h>\n' >> $@
+	@printf '#if defined(HAVE_CLOCK_GETTIME) && defined(_POSIX_TIMERS) && _POSIX_TIMERS == -1\n' >> $@
+	@printf '#undef _POSIX_TIMERS\n' >> $@
+	@printf '#define _POSIX_TIMERS 200809L\n' >> $@
+	@printf '#endif\n' >> $@
 	@echo "  wrote $@"
 
 # Compile all .c in ext/posix/ via cd + glob.
@@ -447,6 +538,7 @@ LUAPOSIX_INC := -I$(CURDIR)/$(LUA_SRC) \
 	-I$(CURDIR)/$(LUAPOSIX_DIR)/ext/posix \
 	-include $(LUAPOSIX_CONFIG_H) \
 	-include net/if.h \
+	$(LUAPOSIX_PLAT_DEFS) \
 	-DPACKAGE='"luaposix"' -DVERSION='"$(LUAPOSIX_VER)"'
 
 # Flags for compiling a posix .so directly from source (no intermediate .o)
