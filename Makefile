@@ -1174,6 +1174,7 @@ LIBUV_A     := $(BUILD)/libluv_libuv.a
 # target must be an absolute path (relative symlinks from inside deps/
 # would break if the working directory changes).
 $(LUV_DIR)/.libuv-linked: $(LUV_DIR) $(LIBUV_DIR)
+	mkdir -p $(LUV_DIR)/deps
 	rm -rf $(LUV_DIR)/deps/libuv
 	ln -sf $(CURDIR)/$(LIBUV_DIR) $(LUV_DIR)/deps/libuv
 	touch $@
