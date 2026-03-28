@@ -133,6 +133,11 @@ else
   NM_LUAOPEN_RE := luaopen_
 endif
 
+# Lua C modules are ALWAYS named .so, even on macOS.
+# Lua's package.cpath uses .so on all platforms; only native shared
+# libraries (liblua, libluv) use the platform SHARED_EXT (.dylib on macOS).
+LUA_MOD_EXT := so
+
 # luaposix needs net/if.h for if_nametoindex / IFNAMSIZ.
 # On Linux it's pulled in transitively; on macOS/FreeBSD it isn't.
 # -include is harmless when the header is already included (header guards).
@@ -328,7 +333,7 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	    echo '#ifdef LUA_CPATH_DEFAULT'; \
 	    echo '#undef LUA_CPATH_DEFAULT'; \
 	    echo '#endif'; \
-	    echo '#define LUA_CPATH_DEFAULT LUA_CDIR"?.$(SHARED_EXT);"LUA_CDIR"loadall.$(SHARED_EXT);""./?.$(SHARED_EXT)"'; \
+	    echo '#define LUA_CPATH_DEFAULT LUA_CDIR"?.$(LUA_MOD_EXT);"LUA_CDIR"loadall.$(LUA_MOD_EXT);""./?.$(LUA_MOD_EXT)"'; \
 	    echo ''; \
 	    echo '/* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
 	  } >> $(LUA_SRC)/luaconf.h; \
@@ -389,12 +394,12 @@ $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@printf '%s\n' '#!/bin/sh' \
 	  'set -e' \
 	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
-	  '  sym=$$(nm -g "$$obj" 2>/dev/null | grep " T.*luaopen_" | head -1 | awk '"'"'{print $$NF}'"'"' | sed "s/^_//")' \
-	  '  if [ -z "$$sym" ]; then continue; fi' \
-	  '  relpath=$$(echo "$$sym" | sed "s/^luaopen_//" | sed "s/_/\//g")' \
-	  '  dir=$$(dirname "$$relpath")' \
-	  '  mkdir -p "'"$(BUILD)"'/luaposix-so/$$dir"' \
-	  '  $(CC) $(SHARED_LINK) -o "'"$(BUILD)"'/luaposix-so/$${relpath}.$(SHARED_EXT)" "$$obj" -L'"$(BUILD)"' -llua $(LDFLAGS_LUA)' \
+	  '  sym=$(nm -g "$obj" 2>/dev/null | grep " T.*luaopen_" | head -1 | awk '"'"'{print $NF}'"'"' | sed "s/^_//")' \
+	  '  if [ -z "$sym" ]; then continue; fi' \
+	  '  relpath=$(echo "$sym" | sed "s/^luaopen_//" | sed "s/_/\//g")' \
+	  '  dir=$(dirname "$relpath")' \
+	  '  mkdir -p "'"$(BUILD)"'/luaposix-so/$dir"' \
+	  '  $(CC) $(SHARED_LINK) -o "'"$(BUILD)"'/luaposix-so/${relpath}.$(LUA_MOD_EXT)" "$obj" -L'"$(BUILD)"' -llua $(LDFLAGS_LUA)' \
 	  'done' > $(BUILD)/_build_posix_so.sh
 	@sh $(BUILD)/_build_posix_so.sh
 	@touch $@
@@ -447,7 +452,7 @@ $(BUILD)/libluv.a: $(LUA_A) $(LUV_DIR)/.libuv-linked
 	  else echo "ERROR: libuv.a not found in luv build tree"; \
 	       find $(LUV_BUILD) -name "*.a"; exit 1; fi'
 
-$(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO)
+$(BUILD)/luv.$(LUA_MOD_EXT): $(BUILD)/libluv.a $(LUA_SO)
 	@mkdir -p $(LUV_BUILD)/shared
 	cd $(LUV_BUILD)/shared && $(CMAKE) \
 	  -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)" \
@@ -460,16 +465,18 @@ $(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO)
 	  -DBUILD_SHARED_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD)/shared -j$(NPROC)
-	@# Copy luv.so — use find -exec to avoid shell variable issues
-	find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' -exec cp {} $@ \;
-	@test -f $@ || { echo "ERROR: luv.$(SHARED_EXT) not found"; \
-	  find $(LUV_BUILD)/shared -name '*.$(SHARED_EXT)'; exit 1; }
+	@# luv's Lua module is always named luv.so regardless of platform
+	find $(LUV_BUILD)/shared -name 'luv.so' -exec cp {} $@ \;
+	@test -f $@ || { echo "ERROR: luv.so not found"; \
+	  find $(LUV_BUILD)/shared -name '*.so' -o -name '*.dylib'; exit 1; }
 
-$(BUILD)/libluv.$(SHARED_EXT): $(BUILD)/luv.$(SHARED_EXT)
-	cp $< $@
+$(BUILD)/libluv.$(SHARED_EXT): $(BUILD)/luv.$(LUA_MOD_EXT)
+	find $(LUV_BUILD)/shared -name 'libluv.$(SHARED_EXT)' -exec cp {} $@ \;
+	@test -f $@ || { echo "ERROR: libluv.$(SHARED_EXT) not found"; \
+	  find $(LUV_BUILD)/shared -name 'libluv*'; exit 1; }
 
 .PHONY: luv
-luv: $(BUILD)/libluv.a $(BUILD)/luv.$(SHARED_EXT) $(BUILD)/libluv.$(SHARED_EXT)
+luv: $(BUILD)/libluv.a $(BUILD)/luv.$(LUA_MOD_EXT) $(BUILD)/libluv.$(SHARED_EXT)
 
 # =============================================================================
 # 4. LUAFILESYSTEM (lfs)
@@ -485,11 +492,11 @@ $(BUILD)/liblfs.a: $(BUILD)/lfs-obj/lfs.o
 	$(AR) rcs $@ $<
 	$(RANLIB) $@
 
-$(BUILD)/lfs.$(SHARED_EXT): $(BUILD)/lfs-obj/lfs.o $(LUA_SO)
+$(BUILD)/lfs.$(LUA_MOD_EXT): $(BUILD)/lfs-obj/lfs.o $(LUA_SO)
 	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: lfs
-lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(SHARED_EXT)
+lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(LUA_MOD_EXT)
 
 # =============================================================================
 # 5. LPEG
@@ -507,11 +514,11 @@ $(BUILD)/liblpeg.a: $(BUILD)/lpeg-obj/.built
 	$(AR) rcs $@ $(BUILD)/lpeg-obj/*.o
 	$(RANLIB) $@
 
-$(BUILD)/lpeg.$(SHARED_EXT): $(BUILD)/lpeg-obj/.built $(LUA_SO)
+$(BUILD)/lpeg.$(LUA_MOD_EXT): $(BUILD)/lpeg-obj/.built $(LUA_SO)
 	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lpeg-obj/*.o -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: lpeg
-lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(SHARED_EXT)
+lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT)
 
 # =============================================================================
 # 6. LUA-TERM
@@ -526,11 +533,11 @@ $(BUILD)/libluaterm.a: $(BUILD)/luaterm-obj/core.o
 	$(AR) rcs $@ $<
 	$(RANLIB) $@
 
-$(BUILD)/term_core.$(SHARED_EXT): $(BUILD)/luaterm-obj/core.o $(LUA_SO)
+$(BUILD)/term_core.$(LUA_MOD_EXT): $(BUILD)/luaterm-obj/core.o $(LUA_SO)
 	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: luaterm
-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(SHARED_EXT)
+luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
 
 # =============================================================================
 # 7. DKJSON (pure Lua)
@@ -646,7 +653,7 @@ static-lua: $(STATIC_LUA_BIN)
 # =============================================================================
 
 TEST_LUA = LUA_PATH="$(CURDIR)/$(LUAPOSIX_DIR)/lib/?.lua;$(CURDIR)/$(LUAPOSIX_DIR)/lib/?/init.lua;$(CURDIR)/$(LUATERM_DIR)/?.lua;$(CURDIR)/$(LUATERM_DIR)/?/init.lua;$(CURDIR)/$(LPEG_DIR)/?.lua;$(CURDIR)/$(DKJSON_FILE);;" \
-           LUA_CPATH="$(BUILD)/luaposix-so/?.$(SHARED_EXT);$(BUILD)/luaposix-so/?/init.$(SHARED_EXT);$(BUILD)/?.$(SHARED_EXT);$(BUILD)/term_core.$(SHARED_EXT);;" \
+           LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);$(BUILD)/term_core.$(LUA_MOD_EXT);;" \
            $(LUA_BIN)
 
 define TEST_SCRIPT
@@ -769,9 +776,9 @@ else print("ALL TESTS PASSED") end
 endef
 export TEST_SCRIPT
 
-test: $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(SHARED_EXT) \
-      $(BUILD)/lfs.$(SHARED_EXT) $(BUILD)/lpeg.$(SHARED_EXT) \
-      $(BUILD)/term_core.$(SHARED_EXT) $(DKJSON_FILE)
+test: $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
+      $(BUILD)/lfs.$(LUA_MOD_EXT) $(BUILD)/lpeg.$(LUA_MOD_EXT) \
+      $(BUILD)/term_core.$(LUA_MOD_EXT) $(DKJSON_FILE)
 	@mkdir -p $(BUILD)
 	@echo "$$TEST_SCRIPT" > $(BUILD)/test_bundled.lua
 	$(TEST_LUA) $(BUILD)/test_bundled.lua
@@ -807,46 +814,46 @@ install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	install -d $(PREFIX)/lib $(PREFIX)/share/lua/$(LUA_SHORT)/posix
 	install -m 644 $(BUILD)/libluaposix.a $(PREFIX)/lib/
 	cd $(BUILD)/luaposix-so && \
-	  find . -name '*.$(SHARED_EXT)' -exec sh -c \
-	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$$(dirname "$$1")"; install -d "$$d"; install -m 755 "$$1" "$$d/"' \
+	  find . -name '*.$(LUA_MOD_EXT)' -exec sh -c \
+	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$(dirname "$1")"; install -d "$d"; install -m 755 "$1" "$d/"' \
 	    _ {} \;
 	@if [ -d $(LUAPOSIX_DIR)/lib/posix ]; then \
 	  cd $(LUAPOSIX_DIR)/lib && \
 	  find posix -name '*.lua' -exec sh -c \
-	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$$(dirname "$$1")"; install -d "$$d"; install -m 644 "$$1" "$$d/"' \
+	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$(dirname "$1")"; install -d "$d"; install -m 644 "$1" "$d/"' \
 	    _ {} \; ; \
 	fi
 
-install-luv: $(BUILD)/libluv.a $(BUILD)/luv.$(SHARED_EXT) $(LIBUV_A)
+install-luv: $(BUILD)/libluv.a $(BUILD)/luv.$(LUA_MOD_EXT) $(LIBUV_A)
 	install -d $(PREFIX)/lib $(PREFIX)/lib/lua/$(LUA_SHORT) $(PREFIX)/include
 	install -m 644 $(BUILD)/libluv.a $(PREFIX)/lib/
 	install -m 644 $(LIBUV_A) $(PREFIX)/lib/libluv_libuv.a
-	install -m 755 $(BUILD)/luv.$(SHARED_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/luv.$(SHARED_EXT)
+	install -m 755 $(BUILD)/luv.$(LUA_MOD_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/luv.$(LUA_MOD_EXT)
 	install -m 755 $(BUILD)/libluv.$(SHARED_EXT) $(PREFIX)/lib/
 	@if [ -d $(LUV_DIR)/src ]; then \
 	  find $(LUV_DIR)/src -name '*.h' -exec install -m 644 {} $(PREFIX)/include/ \; ; \
 	fi
 
-install-lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(SHARED_EXT)
+install-lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(LUA_MOD_EXT)
 	install -d $(PREFIX)/lib $(PREFIX)/lib/lua/$(LUA_SHORT)
 	install -m 644 $(BUILD)/liblfs.a $(PREFIX)/lib/
-	install -m 755 $(BUILD)/lfs.$(SHARED_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/lfs.$(SHARED_EXT)
+	install -m 755 $(BUILD)/lfs.$(LUA_MOD_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/lfs.$(LUA_MOD_EXT)
 
-install-lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(SHARED_EXT)
+install-lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT)
 	install -d $(PREFIX)/lib $(PREFIX)/lib/lua/$(LUA_SHORT) $(PREFIX)/share/lua/$(LUA_SHORT)
 	install -m 644 $(BUILD)/liblpeg.a $(PREFIX)/lib/
-	install -m 755 $(BUILD)/lpeg.$(SHARED_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/lpeg.$(SHARED_EXT)
+	install -m 755 $(BUILD)/lpeg.$(LUA_MOD_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/lpeg.$(LUA_MOD_EXT)
 	@if [ -f $(LPEG_DIR)/re.lua ]; then \
 	  install -m 644 $(LPEG_DIR)/re.lua $(PREFIX)/share/lua/$(LUA_SHORT)/re.lua; \
 	fi
 
-install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(SHARED_EXT)
+install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
 	install -d $(PREFIX)/lib \
 	           $(PREFIX)/lib/lua/$(LUA_SHORT)/term \
 	           $(PREFIX)/share/lua/$(LUA_SHORT)/term
 	install -m 644 $(BUILD)/libluaterm.a $(PREFIX)/lib/
-	install -m 755 $(BUILD)/term_core.$(SHARED_EXT) \
-	  $(PREFIX)/lib/lua/$(LUA_SHORT)/term/core.$(SHARED_EXT)
+	install -m 755 $(BUILD)/term_core.$(LUA_MOD_EXT) \
+	  $(PREFIX)/lib/lua/$(LUA_SHORT)/term/core.$(LUA_MOD_EXT)
 	cd $(LUATERM_DIR)/term && find . -name '*.lua' -exec install -m 644 {} \
 	  $(PREFIX)/share/lua/$(LUA_SHORT)/term/ \;
 
