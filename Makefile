@@ -126,6 +126,11 @@ else
   NM_LUAOPEN_RE := luaopen_
 endif
 
+# luaposix needs net/if.h for if_nametoindex / IFNAMSIZ.
+# On Linux it's pulled in transitively; on macOS/FreeBSD it isn't.
+# -include is harmless when the header is already included (header guards).
+LUAPOSIX_PLAT_CFLAGS := -include net/if.h
+
 # =============================================================================
 # TOP-LEVEL TARGETS
 # =============================================================================
@@ -348,7 +353,7 @@ liblua-shared: $(LUA_SO)
 # Compile all .c in ext/posix/ via cd + glob
 $(BUILD)/luaposix-obj/.built: $(LUA_A) $(LUAPOSIX_DIR)
 	@mkdir -p $(BUILD)/luaposix-obj
-	cd $(LUAPOSIX_DIR)/ext/posix && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
+	cd $(LUAPOSIX_DIR)/ext/posix && $(CC) $(CFLAGS) $(SHARED_FLAGS) $(LUAPOSIX_PLAT_CFLAGS) \
 	  -I$(CURDIR)/$(LUA_SRC) \
 	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
 	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/posix \
@@ -833,4 +838,4 @@ install-pkgconfig:
 	  echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
 	  echo 'Libs.private: -lpthread'; \
 	  echo 'Cflags: -I$${includedir}'; \
-	} > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pcsh shell on macOS).
+	} > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pc
