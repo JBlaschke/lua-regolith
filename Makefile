@@ -39,13 +39,14 @@ MAKEFLAGS += --no-builtin-rules
 
 # ---- User-configurable knobs ------------------------------------------------
 
-PREFIX     ?= /usr/local
-CC         ?= gcc
-AR         ?= ar
-RANLIB     ?= ranlib
-CMAKE      ?= cmake
-WGET       ?= wget -q
-NPROC      := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+RELOCATABLE ?= 0
+PREFIX      ?= /usr/local
+CC          ?= gcc
+AR          ?= ar
+RANLIB      ?= ranlib
+CMAKE       ?= cmake
+WGET        ?= wget -q
+NPROC       := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # ---- Versions ---------------------------------------------------------------
 
@@ -175,6 +176,44 @@ install: all install-lua install-luaposix install-luv \
 	@echo "   ./configure --prefix=<lmod-dir> \\"
 	@echo "     --with-lua=$(PREFIX)/bin/lua \\"
 	@echo "     --with-luac=$(PREFIX)/bin/luac"
+	@echo "================================================================"
+
+# ---- Relocate (recompile lua/luac with a new PREFIX) ------------------------
+#
+# Usage:
+#   make relocate PREFIX=/new/path
+#   make PREFIX=/new/path install
+#
+# This strips the old BUNDLED_LUA_PREFIX_OVERRIDE block from luaconf.h,
+# re-patches it with the new PREFIX, and rebuilds only the Lua core (liblua.a,
+# liblua.so, lua, luac).  The C modules (luaposix, luv, lfs, lpeg, lua-term)
+# are untouched — they don't embed prefix paths.
+#
+# This is much faster than a full rebuild and is useful when moving an existing
+# installation to a new location without the overhead of RELOCATABLE=1's
+# runtime exe resolution.
+
+relocate: $(LUA_DIR)
+	@echo "  Relocating to PREFIX=$(PREFIX) ..."
+	@# Strip the existing override block from luaconf.h
+	@if grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
+	  sed '/\/\* ---- BUNDLED_LUA_PREFIX_OVERRIDE ----/,/\/\* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ----/d' \
+	    $(LUA_SRC)/luaconf.h > $(LUA_SRC)/luaconf.h.new; \
+	  mv $(LUA_SRC)/luaconf.h.new $(LUA_SRC)/luaconf.h; \
+	fi
+	@# Remove build markers to force recompilation of lua core only
+	rm -f $(BUILD)/.lua-patched $(BUILD)/lua-obj/.built
+	rm -f $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
+	@# Rebuild lua core
+	$(MAKE) lua liblua-shared
+	@echo ""
+	@echo "================================================================"
+	@echo " Relocated lua-regolith to: $(PREFIX)"
+	@echo ""
+	@echo " The C modules (luaposix, luv, lfs, lpeg, lua-term) are"
+	@echo " unchanged — they don't embed prefix paths."
+	@echo ""
+	@echo " Run 'make PREFIX=$(PREFIX) install' to install."
 	@echo "================================================================"
 
 clean:
@@ -369,10 +408,63 @@ $(LUA_A): $(BUILD)/lua-obj/.built
 $(LUA_SO): $(BUILD)/lua-obj/.built
 	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
+# ---- Relocatable support (RELOCATABLE=1) ------------------------------------
+#
+# When RELOCATABLE=1, the lua binary resolves its own exe path at startup and
+# computes package.path / package.cpath relative to the install root. This
+# allows the entire prefix to be moved (cp -a, rsync, tar) without rebuilding.
+#
+# How it works:
+#
+#   1. lua.c is copied and patched: a call to lr_set_relocatable_paths(L)
+#      is inserted immediately after luaL_openlibs(L) in pmain().
+#
+#   2. src/lr_relocatable.c is compiled and linked into the binary.  It uses
+#   platform-specific APIs (readlink /proc/self/exe on Linux,
+#   _NSGetExecutablePath on macOS, sysctl on FreeBSD) to find the exe's real
+#   path, strips two directory levels to get the prefix, and sets package.path
+#   / package.cpath.
+#
+#   3. luaconf.h is still patched with the build-time PREFIX (as usual). These
+#   serve as fallback defaults for liblua embedders and for luac, which doesn't
+#   get the relocatable treatment.
+#
+# When RELOCATABLE=0 (default), lua.c is compiled directly from the source tree
+# with no modifications — identical to the original behavior.
+
+ifeq ($(RELOCATABLE),1)
+
+# Patch lua.c: insert lr_set_relocatable_paths(L) after luaL_openlibs(L)
+$(BUILD)/relocatable/lua.c: $(BUILD)/.lua-patched
+	@mkdir -p $(BUILD)/relocatable
+	awk '{print} /luaL_openlibs\(L\)/{print "  lr_set_relocatable_paths(L);"}' \
+	  $(LUA_SRC)/lua.c > $@
+
+# Compile the relocatable path-resolution module
+$(BUILD)/relocatable/lr_relocatable.o: src/lr_relocatable.c src/lr_relocatable.h $(LUA_DIR)
+	@mkdir -p $(BUILD)/relocatable
+	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -Isrc \
+	  -DLR_LUA_SHORT='"$(LUA_SHORT)"' \
+	  -c -o $@ $<
+
+# Build lua binary with exe-relative path resolution
+$(LUA_BIN): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(LUA_SO)
+	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -Isrc \
+	  -include src/lr_relocatable.h \
+	  -DLR_LUA_SHORT='"$(LUA_SHORT)"' \
+	  -o $@ $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o \
+	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
+	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
+
+else
+
+# Default: build lua directly from source (hardcoded paths from luaconf.h)
 $(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
 	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
+
+endif
 
 $(LUAC_BIN): $(LUA_SRC)/luac.c $(LUA_A)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< $(LUA_A) $(LDFLAGS_LUA)

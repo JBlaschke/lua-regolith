@@ -114,7 +114,7 @@ luastatic main.lua \
 
 Include only the `.a` files for modules your script actually uses.
 
-## Fully Static Interpreter (Bonus)
+## Fully Static Interpreter
 
 ```bash
 make PREFIX=/opt/lua-regolith static-lua
@@ -204,17 +204,18 @@ apk add build-base cmake wget readline-dev readline-static linux-headers python3
 
 ## Configuration
 
-| Variable      | Default      | Purpose                |
-|---------------|--------------|------------------------|
-| `PREFIX`      | `/usr/local` | Install location       |
-| `LUA_VER`     | `5.4.7`      | Lua version            |
-| `LUAPOSIX_VER`| `36.2.1`     | luaposix version       |
-| `LUV_VER`     | `1.48.0-2`   | luv version            |
-| `LIBUV_VER`   | `1.48.0`     | libuv version          |
-| `LFS_VER`     | `1.9.0`      | luafilesystem version  |
-| `LPEG_VER`    | `1.1.0`      | lpeg version           |
-| `LUATERM_VER` | `0.8`        | lua-term version       |
-| `DKJSON_VER`  | `2.8`        | dkjson version         |
+| Variable      | Default      | Purpose                           |
+|---------------|--------------|-----------------------------------|
+| `PREFIX`      | `/usr/local` | Install location                  |
+| `RELOCATABLE` | `0`          | `1` = exe-relative package paths  |
+| `LUA_VER`     | `5.4.7`      | Lua version                       |
+| `LUAPOSIX_VER`| `36.2.1`     | luaposix version                  |
+| `LUV_VER`     | `1.48.0-2`   | luv version                       |
+| `LIBUV_VER`   | `1.48.0`     | libuv version                     |
+| `LFS_VER`     | `1.9.0`      | luafilesystem version             |
+| `LPEG_VER`    | `1.1.0`      | lpeg version                      |
+| `LUATERM_VER` | `0.8`        | lua-term version                  |
+| `DKJSON_VER`  | `2.8`        | dkjson version                    |
 
 `LUA_SHORT` (e.g. `5.4`) is derived automatically from `LUA_VER` — you
 don't need to set it separately.
