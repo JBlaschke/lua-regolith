@@ -847,6 +847,12 @@ TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
            LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);$(BUILD)/term_core.$(LUA_MOD_EXT);;" \
            $(LUA_BIN)
 
+TEST_DEPS = $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
+            $(BUILD)/lfs.$(LUA_MOD_EXT) $(BUILD)/lpeg.$(LUA_MOD_EXT) \
+            $(BUILD)/term_core.$(LUA_MOD_EXT) $(DKJSON_FILE)
+
+# ---- Quick smoke test (inline heredoc) --------------------------------------
+
 define TEST_SCRIPT
 local pass, fail = 0, 0
 local function test(name, fn)
@@ -968,16 +974,26 @@ else print("ALL TESTS PASSED") end
 endef
 export TEST_SCRIPT
 
-test: $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
-      $(BUILD)/lfs.$(LUA_MOD_EXT) $(BUILD)/lpeg.$(LUA_MOD_EXT) \
-      $(BUILD)/term_core.$(LUA_MOD_EXT) $(DKJSON_FILE)
+.PHONY: quicktest
+quicktest: $(TEST_DEPS)
 	@mkdir -p $(BUILD)
-	@echo "$$TEST_SCRIPT" > $(BUILD)/test_bundled.lua
-	$(TEST_LUA) $(BUILD)/test_bundled.lua
+	@echo "$$TEST_SCRIPT" > $(BUILD)/test_quick.lua
+	$(TEST_LUA) $(BUILD)/test_quick.lua
+	@if [ -f $(STATIC_LUA_BIN) ]; then \
+	  echo ""; echo "=== Testing static binary (quick) ==="; echo ""; \
+	  LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
+	    $(STATIC_LUA_BIN) $(BUILD)/test_quick.lua; \
+	fi
+
+# ---- Comprehensive test (test/test_bundled.lua) -----------------------------
+
+.PHONY: test
+test: $(TEST_DEPS)
+	$(TEST_LUA) test/test_bundled.lua
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  echo ""; echo "=== Testing static binary ==="; echo ""; \
-	  LUA_PATH="$(CURDIR)/$(LUAPOSIX_DIR)/lib/?.lua;$(CURDIR)/$(LUAPOSIX_DIR)/lib/?/init.lua;$(CURDIR)/$(LUATERM_DIR)/?.lua;$(CURDIR)/$(LUATERM_DIR)/?/init.lua;$(CURDIR)/$(LPEG_DIR)/?.lua;$(CURDIR)/$(DKJSON_FILE);;" \
-	    $(STATIC_LUA_BIN) $(BUILD)/test_bundled.lua; \
+	  LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
+	    $(STATIC_LUA_BIN) test/test_bundled.lua; \
 	fi
 
 # =============================================================================
