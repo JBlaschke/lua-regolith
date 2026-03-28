@@ -43,13 +43,14 @@ jobs:
             makefile:  Makefile
 
           - name:      linux-x86_64-glibc-legacy
-            runner:    ubuntu-20.04
-            container: ""
+            runner:    ubuntu-22.04
+            container: ubuntu:20.04
             docker_img: ""
             deps: >-
-              sudo apt-get update &&
-              sudo apt-get install -y build-essential cmake wget
-              libreadline-dev python3
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive
+              apt-get install -y build-essential cmake wget
+              libreadline-dev python3 git
             makefile:  Makefile
 
           - name:      linux-x86_64-musl
