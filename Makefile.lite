@@ -671,10 +671,13 @@ $(LIBUV_A): $(BUILD)/libuv-obj/.built
 #
 # Compile all .c files in luv's src/ directory via cd + glob.
 
+# luv uses a single-translation-unit build: luv.c #includes all the other
+# .c files (handle.c, lreq.c, lhandle.c, etc.).  The internal functions are
+# declared static in private.h and defined across the included files.
+# Compiling *.c individually would break this — only luv.c should be compiled.
 $(BUILD)/luv-obj/.built: $(LUA_A) $(LUV_DIR) $(LIBUV_A)
 	@mkdir -p $(BUILD)/luv-obj
-	cd $(LUV_DIR)/src && $(CC) $(LUV_CFLAGS) -c *.c
-	mv $(LUV_DIR)/src/*.o $(BUILD)/luv-obj/
+	$(CC) $(LUV_CFLAGS) -c -o $(BUILD)/luv-obj/luv.o $(LUV_DIR)/src/luv.c
 	@touch $@
 
 $(BUILD)/libluv.a: $(BUILD)/luv-obj/.built
