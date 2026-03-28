@@ -362,10 +362,10 @@ $(LUA_A): $(BUILD)/lua-obj/.built
 $(LUA_SO): $(BUILD)/lua-obj/.built
 	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
-$(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_A)
+$(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< \
-	  $(LUA_A) $(LDFLAGS_LUA) \
-	  $(RPATH_FLAG) -rdynamic
+	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
+	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
 
 $(LUAC_BIN): $(LUA_SRC)/luac.c $(LUA_A)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< $(LUA_A) $(LDFLAGS_LUA)
@@ -379,16 +379,30 @@ liblua-shared: $(LUA_SO)
 # =============================================================================
 
 # Compile all .c in ext/posix/ via cd + glob
-$(BUILD)/luaposix-obj/.built: $(LUA_A) $(LUAPOSIX_DIR)
+LUAPOSIX_INC := -I$(CURDIR)/$(LUA_SRC) \
+	-I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
+	-I$(CURDIR)/$(LUAPOSIX_DIR)/ext/posix \
+	-DPACKAGE='"luaposix"' -DVERSION='"$(LUAPOSIX_VER)"'
+
+# Flags for compiling a posix .so directly from source (no intermediate .o)
+LUAPOSIX_SO_CMD = $(CC) $(SHARED_LINK) $(CFLAGS) $(SHARED_FLAGS) \
+	$(LUAPOSIX_PLAT_CFLAGS) $(LUAPOSIX_INC) -L$(BUILD) -llua $(LDFLAGS_LUA)
+
+$(BUILD)/luaposix-obj/.built-top: $(LUA_A) $(LUAPOSIX_DIR)
 	@mkdir -p $(BUILD)/luaposix-obj
-	cd $(LUAPOSIX_DIR)/ext/posix && $(CC) $(CFLAGS) $(SHARED_FLAGS) $(LUAPOSIX_PLAT_CFLAGS) \
-	  -I$(CURDIR)/$(LUA_SRC) \
-	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
-	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/posix \
-	  -DPACKAGE='"luaposix"' \
-	  -DVERSION='"$(LUAPOSIX_VER)"' \
-	  -c *.c
+	cd $(LUAPOSIX_DIR)/ext/posix && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
+	  $(LUAPOSIX_PLAT_CFLAGS) $(LUAPOSIX_INC) -c *.c
 	mv $(LUAPOSIX_DIR)/ext/posix/*.o $(BUILD)/luaposix-obj/
+	@touch $@
+
+$(BUILD)/luaposix-obj/.built-sys: $(LUA_A) $(LUAPOSIX_DIR)
+	@mkdir -p $(BUILD)/luaposix-obj/sys
+	cd $(LUAPOSIX_DIR)/ext/posix/sys && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
+	  $(LUAPOSIX_PLAT_CFLAGS) $(LUAPOSIX_INC) -c *.c
+	mv $(LUAPOSIX_DIR)/ext/posix/sys/*.o $(BUILD)/luaposix-obj/sys/
+	@touch $@
+
+$(BUILD)/luaposix-obj/.built: $(BUILD)/luaposix-obj/.built-top $(BUILD)/luaposix-obj/.built-sys
 	@touch $@
 
 $(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
@@ -581,7 +595,7 @@ $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
 	@printf 'echo '"'"'#include "lauxlib.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
 	@printf 'echo '"'"'#include "lualib.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
 	@printf 'echo ""\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'for obj in %s/luaposix-obj/*.o; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
+	@printf 'find %s/luaposix-obj -name "*.o" | while read obj; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
 	@printf '  nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | sed '"'"'s/.* //;s/^_//'"'"' | while read s; do\n' >> $(BUILD)/_gen_preload.sh
 	@printf '    echo "int \044{s}(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
 	@printf '  done\n' >> $(BUILD)/_gen_preload.sh
@@ -592,7 +606,7 @@ $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
 	@printf 'echo "int luaopen_term_core(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
 	@printf 'echo ""\n' >> $(BUILD)/_gen_preload.sh
 	@printf 'echo "static const struct { const char *name; lua_CFunction func; } bundled[] = {"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'for obj in %s/luaposix-obj/*.o; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
+	@printf 'find %s/luaposix-obj -name "*.o" | while read obj; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
 	@printf '  nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | sed '"'"'s/.* //;s/^_//'"'"' | while read s; do\n' >> $(BUILD)/_gen_preload.sh
 	@printf '    m=\044(echo "\044s" | sed '"'"'s/^luaopen_//;s|_|.|g'"'"')\n' >> $(BUILD)/_gen_preload.sh
 	@printf '    echo "  { \\\\"\044m\\\\", \044s },"\n' >> $(BUILD)/_gen_preload.sh
@@ -696,9 +710,10 @@ test("Lua version starts with 'Lua 5.'", function()
   assert(_VERSION:match("^Lua 5%."), "unexpected: " .. _VERSION)
 end)
 
--- luaposix
-test("require posix", function()
-  assert(require("posix"), "nil")
+-- luaposix C modules (tested directly, bypassing the top-level posix
+-- meta-module which requires the optional std.strict dependency)
+test("require posix.unistd", function()
+  assert(require("posix.unistd"), "nil")
 end)
 test("posix.unistd.getpid()", function()
   local pid = require("posix.unistd").getpid()
@@ -762,9 +777,9 @@ test("lpeg.match basic", function()
   local lpeg = require("lpeg")
   assert(lpeg.match(lpeg.P("hello"), "hello world") == 6)
 end)
-test("lpeg.version()", function()
-  local v = require("lpeg").version()
-  assert(type(v) == "string" and #v > 0, "bad ver")
+test("lpeg.version is a string", function()
+  local v = require("lpeg").version
+  assert(type(v) == "string" and #v > 0, "bad ver: " .. tostring(v))
 end)
 
 -- lua-term
