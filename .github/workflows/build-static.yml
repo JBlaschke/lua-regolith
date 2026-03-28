@@ -189,6 +189,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}":"${{ github.workspace }}" \
             -w "${{ github.workspace }}" \
+            -e CI=true \
             -e PREFIX="${{ github.workspace }}/lua-regolith" \
             -e LUA_PATH="${{ github.workspace }}/lua-regolith/share/lua/5.4/?.lua;;" \
             "${{ matrix.docker_img }}" \
