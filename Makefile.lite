@@ -101,6 +101,10 @@ DKJSON_URL    := http://dkolf.de/dkjson-lua/dkjson-$(DKJSON_VER).lua
 
 BUILD         := $(CURDIR)/build
 
+# LUA_SRC must be defined here (not in section 1) because the libuv/luv
+# include paths below use := (immediate evaluation) and need it resolved.
+LUA_SRC       := $(LUA_DIR)/src
+
 # ---- Compiler flags ---------------------------------------------------------
 
 CFLAGS        ?= -O2 -Wall
@@ -410,7 +414,6 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 #
 # See the full Makefile for macOS / Make 3.81 compatibility notes.
 
-LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
 LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
 LUA_BIN   := $(BUILD)/lua
