@@ -1,3 +1,11 @@
 lua-5.4.7/
+libuv-1.48.0/
+luv-1.48.0-2/
+lpeg-1.1.0/
+lua-term-0.8/
+luafilesystem-1_9_0/
+luaposix-36.2.1/
+lpeg-1.1.0/
+
 build/
 dist/
