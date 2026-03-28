@@ -31,13 +31,62 @@
 #
 # =============================================================================
 
-# Force POSIX shell for recipes (critical on systems where SHELL may be
-# inherited from the environment, e.g. fish shell on macOS).
+# ---------------------------------------------------------------------------
+# Shell and Make configuration
+# ---------------------------------------------------------------------------
+#
+# SHELL := /bin/sh
+#   Force POSIX /bin/sh for all recipe lines.  By default, GNU Make uses
+#   the value of the SHELL environment variable (or /bin/sh if unset).
+#   On macOS, users running fish or zsh can inadvertently break recipes
+#   that assume Bourne-shell syntax.  The explicit assignment here
+#   guarantees every recipe runs under /bin/sh regardless of the user's
+#   login shell.  (Note: Make's SHELL is independent of the environment
+#   variable — setting it here does NOT change the user's interactive shell.)
+#
+# .SUFFIXES:
+#   Clear all built-in suffix rules (e.g. .c → .o, .y → .c).  GNU Make
+#   ships with ~100 implicit rules that attempt pattern-based compilation.
+#   These are unnecessary here (we specify every compilation step explicitly)
+#   and can cause confusing behavior when files match a built-in pattern.
+#   Clearing the suffix list disables all suffix-based implicit rules.
+#
+# MAKEFLAGS += --no-builtin-rules
+#   Disables ALL implicit rules, including both suffix rules AND pattern
+#   rules (like %: %.o).  This is the belt-and-suspenders companion to
+#   .SUFFIXES: — together they ensure Make never tries to "help" by
+#   compiling something we didn't ask for.  This also speeds up Make
+#   slightly, since it skips the implicit rule search for every target.
+
 SHELL := /bin/sh
 .SUFFIXES:
 MAKEFLAGS += --no-builtin-rules
 
-# ---- User-configurable knobs ------------------------------------------------
+# =============================================================================
+# USER-CONFIGURABLE KNOBS
+# =============================================================================
+#
+# These use the ?= (conditional assignment) operator: the variable is set
+# only if it doesn't already have a value.  This means the user can override
+# any of them from the command line or environment:
+#
+#   make PREFIX=/opt/lua CC=clang all
+#   CC=clang make all
+#   export CC=clang; make all
+#
+# All three set CC to clang.  Without ?=, the Makefile value would silently
+# win over the environment, which is surprising and hard to debug.
+#
+# RELOCATABLE: when set to 1, the lua binary resolves its own exe path at
+#   runtime and computes package.path/package.cpath relative to the install
+#   root.  This allows the entire $PREFIX tree to be moved (cp, rsync, tar)
+#   without rebuilding.  Default 0 = hardcoded paths (simpler, faster startup).
+#
+# NPROC: auto-detects the number of CPU cores for parallel builds (-j).
+#   Tries Linux nproc first, then macOS/BSD sysctl, then falls back to 4.
+#   := (immediate assignment) is used because $(shell ...) is expensive —
+#   we want it evaluated once at parse time, not re-evaluated every time
+#   NPROC is referenced.
 
 RELOCATABLE ?= 0
 PREFIX      ?= /usr/local
@@ -48,22 +97,58 @@ CMAKE       ?= cmake
 WGET        ?= wget -q
 NPROC       := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-# ---- Versions ---------------------------------------------------------------
+# =============================================================================
+# VERSIONS
+# =============================================================================
+#
+# All version variables use := (immediate/simple assignment).  Unlike =
+# (recursive assignment), := expands the right-hand side once at parse time
+# and stores the result as a literal string.  This is the right choice for
+# constants — it's faster (no re-expansion on each use) and avoids
+# accidental circular references.
+#
+# The ?= vs := distinction matters:
+#   ?=  → "set if not already set"       (user can override)
+#   :=  → "set unconditionally, expand now"  (constant, not overridable
+#          via environment — but still overridable via command line)
+#
+# Versions are := because letting the environment accidentally override
+# e.g. LUA_VER would silently break the build in hard-to-diagnose ways.
 
 LUA_VER       := 5.4.7
 LUAPOSIX_VER  := 36.2.1
 LUV_VER       := 1.48.0-2
 LIBUV_VER     := 1.48.0
 LFS_VER       := 1.9.0
-# luafilesystem uses underscores in tags: v1.9.0 → v1_9_0
+
+# luafilesystem uses underscores in its git tags: version 1.9.0 is tagged
+# as "v1_9_0", not "v1.9.0".  We derive both the tag format and the
+# directory name (which uses underscores after extraction) using $(subst):
+#
+# $(subst from,to,text) does global string replacement:
+#   $(subst .,_,1.9.0)  →  1_9_0
+#
+# LFS_TAG adds the "v" prefix for the GitHub download URL.
+# LFS_VER_US is the bare underscored version for the directory name.
 LFS_TAG       := v$(subst .,_,$(LFS_VER))
 LFS_VER_US    := $(subst .,_,$(LFS_VER))
+
 LPEG_VER      := 1.1.0
 LUATERM_VER   := 0.8
 DKJSON_VER    := 2.8
 
-# SHA-256 checksums (set to empty to skip verification for that file).
+# ---------------------------------------------------------------------------
+# SHA-256 checksums
+# ---------------------------------------------------------------------------
+#
+# Used by the `verify` target to ensure downloaded tarballs haven't been
+# tampered with or corrupted in transit.  Set any individual checksum to
+# empty to skip verification for that file (useful when testing with a
+# new upstream release before the official checksum is published).
+#
+# These should be updated whenever a version number above changes.
 # Confirmed from official upstream announcements / trusted package repos:
+
 LUA_SHA256      := 9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30
 LUAPOSIX_SHA256 := 44e5087cd3c47058f9934b90c0017e4cf870b71619f99707dd433074622debb1
 LUV_SHA256      := 2c3a1ddfebb4f6550293a40ee789f7122e97647eede51511f57203de48c03b7a
@@ -73,10 +158,39 @@ LPEG_SHA256     := 4b155d67d2246c1ffa7ad7bc466c1ea899bbc40fef0257cc9c03cecbaed43
 LUATERM_SHA256  := 0cb270be22dfc262beec2f4ffc66b878ccaf236f537d693fa36c8f578fc51aa6
 DKJSON_SHA256   := eb3bf160688fb395a2db6bc52eeff4f7855a6321d2b41bdc754554d13f4e7d44
 
-# ---- Derived paths ----------------------------------------------------------
+# =============================================================================
+# DERIVED PATHS
+# =============================================================================
+#
+# These are computed from the version variables above.  Nothing here should
+# need manual editing when bumping versions — change the version at the top
+# and everything cascades.
 
-# Extract major.minor automatically from LUA_VER
+# ---------------------------------------------------------------------------
+# LUA_SHORT — extract major.minor from the full version string
+# ---------------------------------------------------------------------------
+#
+# Lua's directory layout uses "5.4" (not "5.4.7") for paths like
+# lib/lua/5.4/ and share/lua/5.4/.  We extract this with sed:
+#
+#   echo 5.4.7 | sed 's/\([0-9]*\.[0-9]*\).*/\1/'
+#
+# The regex captures one-or-more digits, a dot, and one-or-more digits
+# into group \1, then matches (and discards) everything after.
+# Result: "5.4"
+#
+# This runs inside $(shell ...), which executes a shell command at
+# Makefile parse time and captures its stdout.
 LUA_SHORT     := $(shell echo $(LUA_VER) | sed 's/\([0-9]*\.[0-9]*\).*/\1/')
+
+# ---------------------------------------------------------------------------
+# Source directories and download URLs
+# ---------------------------------------------------------------------------
+#
+# Convention: FOO_DIR is the directory name after tar extraction,
+# FOO_URL is the download URL.  These are derived mechanically from
+# the version variables so that bumping a version automatically updates
+# both the download URL and the expected directory name.
 
 LUA_DIR       := lua-$(LUA_VER)
 LUA_URL       := https://www.lua.org/ftp/lua-$(LUA_VER).tar.gz
@@ -90,6 +204,8 @@ LUV_URL       := https://github.com/luvit/luv/releases/download/$(LUV_VER)/luv-$
 LIBUV_DIR     := libuv-$(LIBUV_VER)
 LIBUV_URL     := https://github.com/libuv/libuv/archive/refs/tags/v$(LIBUV_VER).tar.gz
 
+# LFS uses the underscored version in its extracted directory name
+# (luafilesystem-1_9_0), matching its git tag convention.
 LFS_DIR       := luafilesystem-$(LFS_VER_US)
 LFS_URL       := https://github.com/lunarmodules/luafilesystem/archive/refs/tags/$(LFS_TAG).tar.gz
 
@@ -99,18 +215,65 @@ LPEG_URL      := http://www.inf.puc-rio.br/~roberto/lpeg/lpeg-$(LPEG_VER).tar.gz
 LUATERM_DIR   := lua-term-$(LUATERM_VER)
 LUATERM_URL   := https://github.com/hoelzro/lua-term/archive/refs/tags/$(LUATERM_VER).tar.gz
 
+# dkjson is distributed as a single .lua file, not a tarball.
 DKJSON_FILE   := dkjson-$(DKJSON_VER).lua
 DKJSON_URL    := http://dkolf.de/dkjson-lua/dkjson-$(DKJSON_VER).lua
 
+# BUILD — the out-of-tree build directory.
+# $(CURDIR) is a built-in Make variable containing the absolute path of
+# the directory where Make was invoked (the project root).  Using an
+# absolute path here ensures recipes work correctly even when they `cd`
+# into subdirectories.
 BUILD         := $(CURDIR)/build
 
-# ---- Compiler flags ---------------------------------------------------------
+# =============================================================================
+# COMPILER FLAGS
+# =============================================================================
+#
+# CFLAGS uses ?= so the user can override optimization/warning flags.
+#
+# LUA_CFLAGS adds Lua-specific defines on top of the user's CFLAGS:
+#   -DLUA_USE_POSIX   — use POSIX features (mkstemp, popen, etc.)
+#   -DLUA_USE_DLOPEN  — use dlopen() for loading C modules at runtime
+#
+# SHARED_FLAGS: -fPIC (Position-Independent Code) is required for any
+# object file that will be linked into a shared library (.so/.dylib).
+# Without it, the linker will reject the objects with a relocation error.
+# We compile ALL objects with -fPIC so that the same .o files can be used
+# for both static (.a) and shared (.so) libraries.
 
 CFLAGS        ?= -O2 -Wall
 LUA_CFLAGS    := $(CFLAGS) -DLUA_USE_POSIX -DLUA_USE_DLOPEN
 SHARED_FLAGS  := -fPIC
 
-# ---- Platform detection -----------------------------------------------------
+# =============================================================================
+# PLATFORM DETECTION
+# =============================================================================
+#
+# $(shell uname -s) returns the kernel name: "Linux", "Darwin" (macOS),
+# "FreeBSD", etc.  We branch on this to set platform-specific variables.
+#
+# Key platform differences:
+#
+#   Shared library extension:
+#     Linux/BSD: .so       macOS: .dylib
+#
+#   Shared library linker flag:
+#     Linux/BSD: -shared   macOS: -dynamiclib
+#
+#   Lua link libraries:
+#     Linux needs -ldl (for dlopen) and -lreadline (for the REPL).
+#     macOS provides dlopen in libSystem (no -ldl needed) and links
+#     readline differently.
+#
+#   Static linking:
+#     Linux: -static works (with NSS caveats on glibc).
+#     macOS: Apple's linker doesn't support -static for user binaries
+#     (it always dynamically links libSystem.B.dylib).
+#
+#   RPATH: embeds a library search path into the binary so it can find
+#   liblua.so at runtime without LD_LIBRARY_PATH.  The syntax is the
+#   same on both platforms but the runtime behavior differs slightly.
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -129,7 +292,22 @@ else
   NM_LUAOPEN_RE := luaopen_
 endif
 
-# ---- luaposix platform defines (mirrors lukefile) ---------------------------
+# ---------------------------------------------------------------------------
+# luaposix platform defines
+# ---------------------------------------------------------------------------
+#
+# These mirror what luaposix's own build system (luke) would pass.
+# They control which POSIX feature-test macros the system headers expose:
+#
+#   _BSD_SOURCE / _DEFAULT_SOURCE — BSD extensions (Linux)
+#   _POSIX_C_SOURCE=200809L      — POSIX.1-2008 features
+#   _XOPEN_SOURCE=700            — X/Open 7 (SUSv4) features
+#   _DARWIN_C_SOURCE             — macOS-specific extensions
+#   __BSD_VISIBLE                — FreeBSD's equivalent of _BSD_SOURCE
+#
+# Without these, system headers may hide declarations that luaposix needs
+# (e.g., struct sigaction fields, clock_gettime, etc.), causing compile
+# errors that look like missing functions but are actually missing macros.
 
 ifeq ($(UNAME_S),Darwin)
   LUAPOSIX_PLAT_DEFS := -D_DARWIN_C_SOURCE
@@ -141,19 +319,45 @@ else
   LUAPOSIX_PLAT_DEFS := -D_POSIX_C_SOURCE=200809L
 endif
 
-# Lua C modules are ALWAYS named .so, even on macOS.
-# Lua's package.cpath uses .so on all platforms; only native shared
-# libraries (liblua, libluv) use the platform SHARED_EXT (.dylib on macOS).
+# ---------------------------------------------------------------------------
+# LUA_MOD_EXT — the extension for Lua C modules
+# ---------------------------------------------------------------------------
+#
+# IMPORTANT: Lua C modules are ALWAYS named .so, even on macOS.
+#
+# This is a common source of confusion.  Native shared libraries on macOS
+# use .dylib (liblua.dylib, libluv.dylib), but Lua's package.cpath
+# searches for .so on ALL platforms.  This is baked into Lua's source code
+# and is the convention followed by every Lua C module in the ecosystem.
+#
+# So we have two extension variables:
+#   SHARED_EXT  — for native shared libraries (.so on Linux, .dylib on macOS)
+#   LUA_MOD_EXT — for Lua-loadable C modules (.so everywhere)
 LUA_MOD_EXT := so
 
 # =============================================================================
 # TOP-LEVEL TARGETS
 # =============================================================================
+#
+# .PHONY declares targets that don't correspond to actual files.  Without
+# this, if someone created a file called "all" or "clean" in the project
+# directory, Make would see it as up-to-date and skip the recipe.  .PHONY
+# tells Make to always run the recipe regardless of filesystem state.
+#
+# The `all` target lists the module-level phony targets as prerequisites.
+# Make builds them left-to-right, but the real ordering comes from the
+# dependency graph: each module depends on $(LUA_A) or $(LUA_SO), so
+# Lua is always built first regardless of the order listed here.
 
 .PHONY: all install clean distclean download verify test static-lua
 
 all: lua liblua-shared luaposix luv lfs lpeg luaterm dkjson
 
+# The install target depends on `all` (so a bare `make install` builds
+# everything first), then runs each module's install sub-target.
+# The trailing @echo block prints a summary banner.  The @ prefix
+# suppresses Make's default behavior of printing each command before
+# executing it — purely cosmetic, since echo output is the message itself.
 install: all install-lua install-luaposix install-luv \
          install-lfs install-lpeg install-luaterm install-dkjson \
          install-pkgconfig
@@ -172,19 +376,30 @@ install: all install-lua install-luaposix install-luv \
 	@echo "     --with-luac=$(PREFIX)/bin/luac"
 	@echo "================================================================"
 
-# ---- Relocate (recompile lua/luac with a new PREFIX) ------------------------
+# =============================================================================
+# RELOCATE — recompile lua/luac with a new PREFIX
+# =============================================================================
 #
 # Usage:
 #   make relocate PREFIX=/new/path
 #   make PREFIX=/new/path install
 #
-# This strips the old BUNDLED_LUA_PREFIX_OVERRIDE block from luaconf.h,
-# re-patches it with the new PREFIX, and rebuilds only the Lua core (liblua.a,
-# liblua.so, lua, luac).  The C modules (luaposix, luv, lfs, lpeg, lua-term)
-# are untouched — they don't embed prefix paths.
+# This is a lightweight alternative to a full rebuild when you just need to
+# change the install prefix.  The key insight is that only the Lua core
+# (liblua, lua, luac) embeds the PREFIX via luaconf.h — the C modules
+# (luaposix, luv, lfs, lpeg, lua-term) don't contain any hardcoded paths,
+# so they don't need recompilation.
 #
-# This is much faster than a full rebuild and is useful when moving an existing
-# installation to a new location without the overhead of RELOCATABLE=1's
+# How it works:
+#   1. Strip the existing BUNDLED_LUA_PREFIX_OVERRIDE block from luaconf.h
+#      using sed with a range pattern: /start/,/end/d deletes all lines
+#      between (and including) the start and end markers.
+#   2. Remove stamp files and build artifacts to force recompilation.
+#   3. Re-run the lua and liblua-shared targets, which will re-patch
+#      luaconf.h with the new PREFIX and recompile.
+#
+# This is much faster than `make distclean && make all` and is useful when
+# moving an existing installation without the overhead of RELOCATABLE=1's
 # runtime exe resolution.
 
 relocate: $(LUA_DIR)
@@ -213,6 +428,8 @@ relocate: $(LUA_DIR)
 clean:
 	rm -rf $(BUILD)
 
+# distclean removes everything: build artifacts AND downloaded/extracted sources.
+# After distclean, you need `make download` again before building.
 distclean: clean
 	rm -rf $(LUA_DIR) $(LUAPOSIX_DIR) $(LUV_DIR) $(LIBUV_DIR) \
 	       $(LFS_DIR) $(LPEG_DIR) $(LUATERM_DIR)
@@ -228,6 +445,14 @@ distclean: clean
 # =============================================================================
 # DOWNLOAD + VERIFY
 # =============================================================================
+#
+# The download target depends on all tarball filenames.  Each tarball has
+# its own implicit rule below (e.g. lua-5.4.7.tar.gz:).  Make checks
+# whether the file exists — if it does, the download is skipped (Make sees
+# the target as up-to-date).  If it doesn't, the recipe runs wget.
+#
+# This means `make download` is idempotent: running it twice only downloads
+# files that are missing.
 
 TARBALLS := lua-$(LUA_VER).tar.gz \
             luaposix-$(LUAPOSIX_VER).tar.gz \
@@ -240,6 +465,10 @@ TARBALLS := lua-$(LUA_VER).tar.gz \
 
 download: $(TARBALLS)
 
+# Each tarball rule has no prerequisites (the target filename is the only
+# thing that matters).  If the file doesn't exist, Make runs the recipe.
+# -O $@ writes to the target filename ($@ is Make's automatic variable
+# for "the name of the target being built").
 lua-$(LUA_VER).tar.gz:
 	$(WGET) -O $@ "$(LUA_URL)"
 
@@ -264,9 +493,43 @@ luaterm-$(LUATERM_VER).tar.gz:
 $(DKJSON_FILE):
 	$(WGET) -O $@ "$(DKJSON_URL)"
 
+# ---------------------------------------------------------------------------
+# SHA-256 verification
+# ---------------------------------------------------------------------------
+#
+# SHA256_CMD auto-detects the available checksum tool:
+#   Linux:  sha256sum (from coreutils)
+#   macOS:  shasum -a 256 (from perl, ships with macOS)
+#
+# $(shell command -v sha256sum 2>/dev/null || echo "shasum -a 256")
+#   `command -v` checks whether sha256sum exists in PATH.  If it does,
+#   its path is returned.  If not (macOS), the || fallback provides
+#   the equivalent macOS command.  2>/dev/null suppresses the "not found"
+#   error message.
+
 SHA256_CMD := $(shell command -v sha256sum 2>/dev/null || echo "shasum -a 256")
 
-# Verify writes a helper script to avoid Make/shell escaping issues
+# The verify target generates a shell script and then runs it.
+#
+# Why a generated script instead of inline shell?
+# Because the verify logic requires shell functions, conditionals, and
+# variable tracking (a `failed` counter) that would be extremely fragile
+# as multi-line Make recipes due to Make's line-by-line execution model
+# (each line runs in a separate shell by default) and the Make 3.81 $$
+# escaping bugs documented in the Lua section below.
+#
+# The script uses a verify_one() function that:
+#   1. Skips verification if the expected checksum is empty
+#   2. Computes the actual checksum with SHA256_CMD
+#   3. Compares expected vs actual, tracking failures
+#
+# The awk '{print $1}' extracts just the hash (both sha256sum and shasum
+# print "hash  filename").  The elaborate single-quote escaping
+# ('"'"') is the standard POSIX trick for embedding a literal single
+# quote inside a single-quoted string:
+#   '  — end the current single-quoted string
+#   "'" — a single quote inside double quotes
+#   '  — resume the single-quoted string
 verify: download
 	@mkdir -p $(BUILD)
 	@printf '%s\n' '#!/bin/sh' \
@@ -289,7 +552,18 @@ verify: download
 	  'echo "All checksums passed."' > $(BUILD)/_verify.sh
 	@sh $(BUILD)/_verify.sh
 
-# ---- Extract ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Extract tarballs
+# ---------------------------------------------------------------------------
+#
+# Each extraction rule depends on its tarball.  The target is the directory
+# name (e.g. lua-5.4.7).  Make checks: does the directory exist?  If yes,
+# skip extraction.  If no, extract the tarball.
+#
+# The `touch $@` at the end updates the directory's timestamp.  This is
+# important because tar preserves the original timestamps from the archive,
+# which may be older than the tarball file.  Without touch, Make would see
+# "directory is older than tarball" and re-extract every time.
 
 $(LUA_DIR): lua-$(LUA_VER).tar.gz
 	tar xf $<
@@ -320,34 +594,76 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 	touch $@
 
 # =============================================================================
-# 1. LUA
+# 1. LUA CORE
 # =============================================================================
 #
 # IMPORTANT — macOS / Make 3.81 compatibility notes:
 #
-# macOS ships GNU Make 3.81, which has two relevant bugs:
+# macOS ships GNU Make 3.81 (from 2006!), which has two relevant bugs that
+# affect how shell variables are written in recipes.  These bugs are fixed
+# in Make 3.82+, but since we need to support macOS out of the box, we
+# work around them throughout this Makefile:
 #
 # BUG 1 — Broken $$ escaping in multi-line recipes:
-#   $$src in a multi-line (\-continued) recipe is parsed as $$s + rc,
-#   where Make expands $s as empty, leaving just "rc". Even $${src}
-#   doesn't help — Make expands ${src} as a Make variable.
-#   Fix: never use $$varname in multi-line recipes. Use one of:
-#     a) cd dir && cc -c *.c; mv *.o dest/ (glob, no shell vars)
-#     b) Write helper .sh scripts with printf, one recipe line per
-#        printf call, using \044 (printf octal for $) so shell vars
-#        survive Make expansion intact.
-#     c) find -exec sh -c '...' _ {} \; (positional args, no loop var)
+#
+#   In Make, $$ is the escape sequence for a literal $ (needed for shell
+#   variables: $$HOME → shell sees $HOME).  In Make 3.81, this escaping
+#   breaks when a recipe line is continued with \ (backslash-newline):
+#
+#     my_rule:
+#         for src in *.c; do \          # ← backslash continues the line
+#           echo $$src; \               # ← BUG: Make 3.81 parses this as
+#         done                          #    $$s + rc, expands $s as empty,
+#                                       #    shell sees just "rc"
+#
+#   Even $${src} doesn't help — Make expands ${src} as a Make variable.
+#
+#   Workarounds used in this Makefile:
+#     a) cd dir && cc -c *.c; mv *.o dest/    (use globs, no shell vars)
+#     b) Write helper .sh scripts with printf, using \044 (printf octal
+#        escape for $) so shell variables survive Make expansion intact.
+#     c) find -exec sh -c '...' _ {} \;  (use positional args $1, no loop var)
 #
 # BUG 2 — awk '{print $NF}' in generated scripts:
-#   When building scripts with printf inside a Make recipe, awk's $NF
-#   would need $$NF which hits BUG 1. Replace with sed 's/.* //'
-#   (last-field extraction) to avoid any $ in the printf call.
+#
+#   When building scripts via printf inside a Make recipe, awk's $NF
+#   would need $$NF to pass through Make.  But $$NF hits BUG 1 in
+#   multi-line recipes.  Solution: replace awk with sed for field
+#   extraction: sed 's/.* //' extracts the last field (equivalent to
+#   awk '{print $NF}') without any $ characters.
 
 LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
 LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
 LUA_BIN   := $(BUILD)/lua
 LUAC_BIN  := $(BUILD)/luac
+
+# ---------------------------------------------------------------------------
+# Patch luaconf.h — hardcode PREFIX into the interpreter
+# ---------------------------------------------------------------------------
+#
+# This is the core mechanism that makes lua-regolith "self-contained":
+# the Lua interpreter knows where to find its modules without relying
+# on LUA_PATH / LUA_CPATH environment variables.
+#
+# Instead of using sed to find-and-replace the existing LUA_ROOT definition
+# (which would break if Lua's formatting changes between releases), we
+# APPEND #undef/#define overrides to the END of luaconf.h.  The C
+# preprocessor always uses the last #define, so our values win regardless
+# of what the stock file contains.  This is the "version resilience" strategy.
+#
+# The guard `grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE'` prevents double-patching
+# if the target is re-run (e.g., after a failed build).
+#
+# Stamp file pattern: $(BUILD)/.lua-patched
+#   Make needs a file to track "has this been done?"  Since the actual
+#   output (a modified luaconf.h) is in-place and not a new file, we
+#   create an empty "stamp" file.  Make checks: does .lua-patched exist
+#   and is it newer than its prerequisites?  If yes, skip the recipe.
+#   `touch $@` creates/updates the stamp file after successful patching.
+#
+# The \ at the end of lines continues a single shell command across
+# multiple lines.  The entire if/fi block runs as one shell invocation.
 
 $(BUILD)/.lua-patched: $(LUA_DIR)
 	@mkdir -p $(BUILD)
@@ -387,7 +703,24 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	fi
 	touch $@
 
-# Compile all .c in src/, then remove lua.o and luac.o
+# ---------------------------------------------------------------------------
+# Compile all Lua core .c files into object files
+# ---------------------------------------------------------------------------
+#
+# Strategy: cd into the source directory, compile everything with a glob
+# (*.c), move all .o files to our build directory, then remove lua.o and
+# luac.o.  This is the "version resilience" approach: if Lua 5.5 adds or
+# removes source files, the glob picks them up automatically.
+#
+# Why remove lua.o and luac.o?  These contain main() functions for the
+# lua and luac executables respectively.  They can't go into liblua.a
+# (which is the Lua runtime library) or you'd get duplicate main() errors
+# when linking any program against it.  The executables are compiled
+# separately below.
+#
+# The `cd dir && cc -c *.c` pattern avoids shell loop variables, which
+# would require $$ escaping and hit the Make 3.81 bug on macOS.
+
 $(BUILD)/lua-obj/.built: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/lua-obj
 	cd $(LUA_SRC) && $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -c *.c
@@ -395,14 +728,40 @@ $(BUILD)/lua-obj/.built: $(BUILD)/.lua-patched
 	rm -f $(BUILD)/lua-obj/lua.o $(BUILD)/lua-obj/luac.o
 	@touch $@
 
+# ---------------------------------------------------------------------------
+# Build liblua.a (static library)
+# ---------------------------------------------------------------------------
+#
+# $(AR) rcs $@ $(BUILD)/lua-obj/*.o
+#   ar is the archiver — it bundles .o files into a .a (static library).
+#   Flags:
+#     r — replace or insert files into the archive
+#     c — create the archive if it doesn't exist (suppress warning)
+#     s — write an index (equivalent to running ranlib afterward)
+#
+# $(RANLIB) $@
+#   Regenerate the archive's symbol index.  Technically redundant with
+#   the 's' flag above, but some older toolchains need an explicit ranlib.
+#   It's harmless on modern systems and ensures portability.
+
 $(LUA_A): $(BUILD)/lua-obj/.built
 	$(AR) rcs $@ $(BUILD)/lua-obj/*.o
 	$(RANLIB) $@
 
+# ---------------------------------------------------------------------------
+# Build liblua.so / liblua.dylib (shared library)
+# ---------------------------------------------------------------------------
+#
+# The shared library is used by the lua binary (linked via -llua) and by
+# all C module .so files.  Using a shared liblua avoids duplicating the
+# entire Lua runtime in every module.
+
 $(LUA_SO): $(BUILD)/lua-obj/.built
 	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
-# ---- Relocatable support (RELOCATABLE=1) ------------------------------------
+# ---------------------------------------------------------------------------
+# Relocatable support (RELOCATABLE=1)
+# ---------------------------------------------------------------------------
 #
 # When RELOCATABLE=1, the lua binary resolves its own exe path at startup and
 # computes package.path / package.cpath relative to the install root. This
@@ -414,27 +773,39 @@ $(LUA_SO): $(BUILD)/lua-obj/.built
 #      is inserted immediately after luaL_openlibs(L) in pmain().
 #
 #   2. src/lr_relocatable.c is compiled and linked into the binary.  It uses
-#   platform-specific APIs (readlink /proc/self/exe on Linux,
-#   _NSGetExecutablePath on macOS, sysctl on FreeBSD) to find the exe's real
-#   path, strips two directory levels to get the prefix, and sets package.path
-#   / package.cpath.
+#      platform-specific APIs (readlink /proc/self/exe on Linux,
+#      _NSGetExecutablePath on macOS, sysctl on FreeBSD) to find the exe's
+#      real path, strips two directory levels to get the prefix, and sets
+#      package.path / package.cpath.
 #
 #   3. luaconf.h is still patched with the build-time PREFIX (as usual). These
-#   serve as fallback defaults for liblua embedders and for luac, which doesn't
-#   get the relocatable treatment.
+#      serve as fallback defaults for liblua embedders and for luac, which
+#      doesn't get the relocatable treatment.
 #
 # When RELOCATABLE=0 (default), lua.c is compiled directly from the source tree
 # with no modifications — identical to the original behavior.
+#
+# ifeq / else / endif is GNU Make's conditional syntax.  It's evaluated at
+# parse time (not build time), so only one branch's rules are ever defined.
 
 ifeq ($(RELOCATABLE),1)
 
 # Patch lua.c: insert lr_set_relocatable_paths(L) after luaL_openlibs(L)
+#
+# awk '{print} /pattern/{print "extra"}' prints every line, and additionally
+# prints "extra" after any line matching the pattern.  This inserts the
+# function call right after the luaL_openlibs(L) line.
 $(BUILD)/relocatable/lua.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/relocatable
 	awk '{print} /luaL_openlibs\(L\)/{print "  lr_set_relocatable_paths(L);"}' \
 	  $(LUA_SRC)/lua.c > $@
 
 # Compile the relocatable path-resolution module
+#
+# -DLR_LUA_SHORT='"$(LUA_SHORT)"' passes the Lua version as a string literal
+# to the C code.  The outer double quotes are consumed by the shell; the
+# inner single quotes become the C string delimiters.  The C code sees:
+#   #define LR_LUA_SHORT "5.4"
 $(BUILD)/relocatable/lr_relocatable.o: src/lr_relocatable.c src/lr_relocatable.h $(LUA_DIR)
 	@mkdir -p $(BUILD)/relocatable
 	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -Isrc \
@@ -442,6 +813,14 @@ $(BUILD)/relocatable/lr_relocatable.o: src/lr_relocatable.c src/lr_relocatable.h
 	  -c -o $@ $<
 
 # Build lua binary with exe-relative path resolution
+#
+# -include src/lr_relocatable.h — force-includes the header before any
+# source code.  This makes the lr_set_relocatable_paths() declaration
+# visible to lua.c without modifying lua.c's #include directives.
+#
+# -Wl,-rpath,$(BUILD) — embed the build directory as an RPATH so the
+# binary can find liblua.so during development/testing (before install).
+# $(RPATH_FLAG) adds the install-time RPATH ($(PREFIX)/lib) as well.
 $(LUA_BIN): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -Isrc \
 	  -include src/lr_relocatable.h \
@@ -452,7 +831,14 @@ $(LUA_BIN): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(L
 
 else
 
-# Default: build lua directly from source (hardcoded paths from luaconf.h)
+# Default: build lua directly from source (hardcoded paths from luaconf.h).
+#
+# $< is Make's automatic variable for "the first prerequisite" — here,
+# $(LUA_SRC)/lua.c.  Using $< instead of repeating the path keeps the
+# recipe DRY and ensures it stays correct if the prerequisite changes.
+#
+# -L$(BUILD) -llua — link against liblua.so in the build directory.
+# The linker searches -L paths for libraries named lib<name>.so.
 $(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
@@ -460,9 +846,15 @@ $(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_SO)
 
 endif
 
+# luac (the Lua compiler) is always statically linked against liblua.a.
+# It doesn't need the shared library or relocatable paths — it's a
+# simple offline tool that compiles .lua files to bytecode.
 $(LUAC_BIN): $(LUA_SRC)/luac.c $(LUA_A)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< $(LUA_A) $(LDFLAGS_LUA)
 
+# Phony convenience targets that group related build products.
+# `lua` builds the static lib + both executables.
+# `liblua-shared` builds just the shared library.
 .PHONY: lua liblua-shared
 lua: $(LUA_A) $(LUA_BIN) $(LUAC_BIN)
 liblua-shared: $(LUA_SO)
@@ -471,49 +863,39 @@ liblua-shared: $(LUA_SO)
 # 2. LUAPOSIX
 # =============================================================================
 
-# ---- luaposix feature detection ---------------------------------------------
+# ---------------------------------------------------------------------------
+# luaposix feature detection
+# ---------------------------------------------------------------------------
 #
 # luaposix guards several modules behind HAVE_* preprocessor macros that its
 # own build system (luke) would normally define.  Since we compile directly
 # from source, we run small compile-and-link tests instead — same idea as
-# autoconf, zero dependencies beyond cc.
+# autoconf's AC_CHECK_HEADERS / AC_CHECK_FUNCS, zero dependencies beyond cc.
 #
 # How it works:
 #
-#   Header probes compile a file that #includes the header in question. If cc
-#   succeeds, the header exists and we emit: #define HAVE_<header> 1.
+#   Header probes: compile a file that #includes the header in question. If
+#   cc succeeds, the header exists and we emit: #define HAVE_<header> 1.
 #
-#   Function probes compile+link a file that calls the function.  The probe
+#   Function probes: compile+link a file that calls the function.  The probe
 #   tries linking with -lcrypt first (needed for crypt(3) on some systems),
 #   then without.  If either succeeds, we emit #define HAVE_<fn> 1.
 #
-#   Both use the same colon-delimited format:
-#     'name:MACRO:header:body'
-#   parsed with ${pair%%:*} / ${pair#*:} shell parameter expansion.
-#
-# The results are written to $(BUILD)/luaposix-config.h, which is
-# force-included (via -include) into every luaposix compilation unit.
-# Because -include is processed before the source file's own #includes,
-# the HAVE_* macros are visible to every guard in luaposix.
-#
-# Both use the same colon-delimited format:
+#   Both use the same colon-delimited format for compactness:
 #     'name:MACRO:header:body'
 #
-#   For example:
-#     'clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; clock_gettime(0, &ts)'
+#   The fields are parsed with POSIX shell parameter expansion operators:
 #
-#   The for loop iterates over each single-quoted string, assigning it
-#   to $pair.  Fields are extracted with POSIX shell parameter expansion:
+#     ${var%%pattern}  — delete the LONGEST match of pattern from the END
+#     ${var#pattern}   — delete the SHORTEST match of pattern from the START
 #
-#     ${pair%%:*}   — delete the longest :* suffix  → first field  (name)
-#     ${pair#*:}    — delete the shortest *: prefix → everything after
-#                     the first colon (remaining fields)
-#
-#   Applied repeatedly to peel off one field at a time:
+#   These are applied repeatedly to peel off one field at a time:
 #
 #     pair='clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; ...'
 #     func=${pair%%:*}               → 'clock_gettime'
+#       (delete longest :* from end → everything up to first colon)
 #     rest=${pair#*:}                → 'HAVE_CLOCK_GETTIME:time.h:struct timespec ts; ...'
+#       (delete shortest *: from start → everything after first colon)
 #     macro=${rest%%:*}              → 'HAVE_CLOCK_GETTIME'
 #     rest=${rest#*:}                → 'time.h:struct timespec ts; ...'
 #     hdr=${rest%%:*}                → 'time.h'
@@ -531,6 +913,11 @@ liblua-shared: $(LUA_SO)
 #   on this platform and we append  #define HAVE_CLOCK_GETTIME 1 to the config
 #   header.  If cc fails, we skip it — luaposix will simply not register that
 #   function.
+#
+# The results are written to $(BUILD)/luaposix-config.h, which is
+# force-included (via -include) into every luaposix compilation unit.
+# Because -include is processed before the source file's own #includes,
+# the HAVE_* macros are visible to every guard in luaposix.
 #
 # macOS _POSIX_TIMERS fixup:
 #
@@ -557,6 +944,10 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	@echo "  luaposix: detecting platform features..."
 	@printf '/* Auto-generated by lua-regolith feature detection */\n' > $@
 	@# --- Header probes ---
+	@# Each entry is 'header:MACRO'.  The for loop iterates over the
+	@# single-quoted strings; the shell sees them as literal tokens
+	@# (the semicolon-backslash at the end continues the for loop body
+	@# across multiple Make recipe lines, which are joined into one shell).
 	@for pair in \
 	  'sys/statvfs.h:HAVE_SYS_STATVFS_H' \
 	  'crypt.h:HAVE_CRYPT_H' \
@@ -575,6 +966,10 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  fi; \
 	done
 	@# --- Function probes (compile + link) ---
+	@# Each entry is 'function:MACRO:header:body'.  The probe tries with
+	@# -lcrypt first (needed for crypt(3) on glibc), then without it.
+	@# The || (OR) between the two cc invocations means: if the first
+	@# fails, try the second.  If either succeeds, the feature is available.
 	@for pair in \
 	  'statvfs:HAVE_STATVFS:sys/statvfs.h:struct statvfs buf; statvfs("/", &buf)' \
 	  'crypt:HAVE_CRYPT:unistd.h:crypt("x","ab")' \
@@ -598,11 +993,7 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	done
 	@rm -f $(BUILD)/_probe.c $(BUILD)/_probe
 	@# --- macOS _POSIX_TIMERS fixup ---
-	@# macOS <unistd.h> unconditionally defines _POSIX_TIMERS as -1 (it
-	@# lacks timer_create etc.), even though clock_gettime works fine.
-	@# luaposix guards clock_gettime behind _POSIX_TIMERS != -1.
-	@# Fix: pull in <unistd.h> here so its include guard fires later in
-	@# the real source, then override _POSIX_TIMERS if our probe passed.
+	@# See the detailed explanation in the comment block above this rule.
 	@printf '\n/* macOS _POSIX_TIMERS fixup */\n' >> $@
 	@printf '#include <unistd.h>\n' >> $@
 	@printf '#if defined(HAVE_CLOCK_GETTIME) && defined(_POSIX_TIMERS) && _POSIX_TIMERS == -1\n' >> $@
@@ -611,14 +1002,29 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	@printf '#endif\n' >> $@
 	@echo "  wrote $@"
 
-# Compile all .c in ext/posix/ via cd + glob.
+# ---------------------------------------------------------------------------
+# Compile luaposix
+# ---------------------------------------------------------------------------
 #
-# The config header is force-included via -include so that HAVE_*
-# macros are visible to every luaposix source file.  This also
-# handles net/if.h inclusion (replacing the old LUAPOSIX_PLAT_CFLAGS
-# hack) — if HAVE_NET_IF_H is defined, luaposix includes it; we also
-# keep -include net/if.h as a belt-and-suspenders measure since some
-# luaposix files reference IFNAMSIZ without guarding the include.
+# LUAPOSIX_INC — the include flags passed to every luaposix compilation.
+#
+# -include $(LUAPOSIX_CONFIG_H)
+#   Force-include the generated config header.  -include is a GCC/Clang
+#   extension that acts as if the file were #included at the very top of
+#   every source file, before any of its own #include directives.  This
+#   is how the HAVE_* macros become visible to luaposix's code.
+#
+# -include net/if.h
+#   Belt-and-suspenders: some luaposix files reference IFNAMSIZ (a constant
+#   from <net/if.h>) without guarding the include behind HAVE_NET_IF_H.
+#   Force-including it ensures the constant is always defined when the
+#   header exists.  On systems where it doesn't exist, the header probe
+#   already failed and this -include is harmless (cc silently ignores
+#   missing -include files).
+#
+# -DPACKAGE / -DVERSION — luaposix expects these to be set by its build
+#   system.  Without them, some modules fail to compile.
+
 LUAPOSIX_INC := -I$(CURDIR)/$(LUA_SRC) \
 	-I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
 	-I$(CURDIR)/$(LUAPOSIX_DIR)/ext/posix \
@@ -627,10 +1033,15 @@ LUAPOSIX_INC := -I$(CURDIR)/$(LUA_SRC) \
 	$(LUAPOSIX_PLAT_DEFS) \
 	-DPACKAGE='"luaposix"' -DVERSION='"$(LUAPOSIX_VER)"'
 
-# Flags for compiling a posix .so directly from source (no intermediate .o)
+# Shorthand for the full command to compile a luaposix .so from source.
+# This is a recursively-expanded variable (= not :=) so that it picks up
+# any changes to its component variables if they're overridden later.
 LUAPOSIX_SO_CMD = $(CC) $(SHARED_LINK) $(CFLAGS) $(SHARED_FLAGS) \
 	$(LUAPOSIX_INC) -L$(BUILD) -llua $(LDFLAGS_LUA)
 
+# Compile top-level C files (ext/posix/*.c) and sub-directory files
+# (ext/posix/sys/*.c) separately, into the same build tree.
+# Uses the cd+glob pattern to avoid shell loop variables.
 $(BUILD)/luaposix-obj/.built-top: $(LUA_A) $(LUAPOSIX_DIR) $(LUAPOSIX_CONFIG_H)
 	@mkdir -p $(BUILD)/luaposix-obj
 	cd $(LUAPOSIX_DIR)/ext/posix && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
@@ -645,29 +1056,84 @@ $(BUILD)/luaposix-obj/.built-sys: $(LUA_A) $(LUAPOSIX_DIR) $(LUAPOSIX_CONFIG_H)
 	mv $(LUAPOSIX_DIR)/ext/posix/sys/*.o $(BUILD)/luaposix-obj/sys/
 	@touch $@
 
+# Convenience stamp: both top-level and sys/ objects are built.
 $(BUILD)/luaposix-obj/.built: $(BUILD)/luaposix-obj/.built-top $(BUILD)/luaposix-obj/.built-sys
 	@touch $@
 
-# Archive all luaposix objects EXCEPT posix.o (the monolithic convenience
-# module).  posix.o re-exports luaopen_* symbols that the individual submodule
-# .o files already define, causing duplicate symbol errors at link time.  The
-# top-level require("posix") is handled by the pure-Lua posix/init.lua instead.
+# ---------------------------------------------------------------------------
+# Build libluaposix.a (static archive)
+# ---------------------------------------------------------------------------
+#
+# IMPORTANT: we exclude posix.o from the archive.
+#
+# posix.o is the "monolithic convenience module" — it re-exports every
+# luaopen_* symbol that the individual submodule .o files already define.
+# Including it would cause "duplicate symbol" errors at link time.
+#
+# The top-level require("posix") is handled by the pure-Lua
+# posix/init.lua instead, which lazy-loads submodules on demand.
+#
+# `find ... | sort | xargs $(AR) rcs $@`
+#   find: recursively locates all .o files, excluding posix.o
+#   sort: ensures deterministic archive ordering (reproducible builds)
+#   xargs: passes the file list as arguments to ar (handles large lists)
+
 $(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
 	rm -f $@
 	find $(BUILD)/luaposix-obj -name '*.o' ! -name 'posix.o' | sort | xargs $(AR) rcs $@
 	$(RANLIB) $@
 
-# Build .so modules via a generated helper script.
+# ---------------------------------------------------------------------------
+# Build luaposix .so modules via a generated helper script
+# ---------------------------------------------------------------------------
 #
-# Shell variables in the generated script are written using \044 (the printf
-# octal escape for $).  This survives Make expansion (Make never sees a bare $)
-# and shell quoting (single-quoted printf args pass \044 to printf literally),
-# and printf converts \044 → $ when writing the script file.  awk '{print $NF}'
-# is replaced by sed 's/.* //' to avoid needing any $ in the printf format
-# strings at all.
+# luaposix has many submodules (posix.unistd, posix.sys.stat, posix.errno,
+# etc.), each of which needs to be installed as a separate .so file in the
+# correct directory hierarchy.  The mapping from .o file to .so path is
+# derived from the luaopen_* symbol exported by each .o:
 #
-# Each printf is a separate single-line Make recipe to further sidestep the
-# Make 3.81 multi-line $$ bug, though \044 would be safe regardless.
+#   posix_unistd.o  exports  luaopen_posix_unistd  →  posix/unistd.so
+#   posix_sys_stat.o exports luaopen_posix_sys_stat → posix/sys/stat.so
+#
+# The script does this for each .o file:
+#   1. Run `nm -g` to find the luaopen_* symbol (the T flag = text/code)
+#   2. Strip the "luaopen_" prefix
+#   3. Replace underscores with slashes to get the relative path
+#   4. Create the directory and link the .so
+#
+# --- Why a generated script? ---
+#
+# This logic requires shell variables in a loop, which hits the Make 3.81
+# $$ escaping bug (see BUG 1 above).  The solution: use printf with the
+# \044 octal escape for $.
+#
+# \044 is the octal representation of the ASCII dollar sign ($).  When
+# printf processes the format string, it converts \044 → $.  This works
+# because:
+#   1. Make sees \044 as literal text (no $ to expand)
+#   2. The shell's printf built-in interprets \044 as an octal escape
+#   3. The resulting script file contains actual $ characters
+#
+# For example:
+#   printf '  sym=\044(nm -g ...)\n' >> script.sh
+# Make sees: printf '  sym=\044(nm -g ...)\n'  (no $ to expand)
+# Shell runs: printf '  sym=\044(nm -g ...)\n'
+# printf outputs: sym=$(nm -g ...)
+# The script file now contains a valid shell command.
+#
+# sed 's/.* //' — extracts the last space-delimited field from nm output.
+# This replaces awk '{print $NF}' which would need $NF in the generated
+# script, requiring \044NF, but more importantly the original codebase
+# avoids awk entirely in generated scripts to stay safe from BUG 2.
+#
+# sed 's/^_//' — strip leading underscore from symbols on macOS.
+# macOS's linker prepends _ to all C symbols (luaopen_posix_unistd
+# becomes _luaopen_posix_unistd in the object file).
+#
+# Each @printf is a separate recipe line (each @ suppresses the echo of
+# that line).  This also sidesteps the Make 3.81 multi-line $$ bug,
+# though \044 would be safe regardless.
+
 $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@mkdir -p $(BUILD)/luaposix-so
 	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_build_posix_so.sh
@@ -689,21 +1155,58 @@ luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built $(LUA_SO)
 # 3. LIBUV + LUV
 # =============================================================================
 #
-# libuv is built once, as part of luv's cmake build, by symlinking the
-# extracted libuv source tree into luv's deps/ directory.  This avoids
-# a redundant cmake invocation.  After luv's build completes, libuv.a
-# is extracted from luv's build tree for use by the static interpreter
-# and for install.
+# libuv (the async I/O library) and luv (its Lua bindings) are built together.
+#
+# Strategy: instead of building libuv separately and then pointing luv at it,
+# we symlink the extracted libuv source tree into luv's deps/ directory.
+# luv's CMakeLists.txt is designed to find and build libuv from deps/libuv/
+# when it's present, which avoids a separate cmake invocation and ensures
+# the two are compiled with compatible flags.
+#
+# After luv's build completes, we extract libuv.a from luv's build tree
+# for use by the static interpreter and for install.
 
 LUV_BUILD   := $(BUILD)/luv-build
 LIBUV_A     := $(BUILD)/libluv_libuv.a
 
-# Symlink libuv source into luv's deps/ so luv's cmake picks it up
-# instead of trying to fetch its own copy.
+# Create the symlink.  ln -sf creates a symbolic link, overwriting any
+# existing one (-f = force).  $(CURDIR) is needed because the symlink
+# target must be an absolute path (relative symlinks from inside deps/
+# would break if the working directory changes).
 $(LUV_DIR)/.libuv-linked: $(LUV_DIR) $(LIBUV_DIR)
 	rm -rf $(LUV_DIR)/deps/libuv
 	ln -sf $(CURDIR)/$(LIBUV_DIR) $(LUV_DIR)/deps/libuv
 	touch $@
+
+# ---------------------------------------------------------------------------
+# Build libluv.a (static) — also builds libuv as a side effect
+# ---------------------------------------------------------------------------
+#
+# CMake flags explained:
+#   -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)"
+#     Pass our CFLAGS and -fPIC through to cmake's compiler invocations.
+#
+#   -DWITH_LUA_ENGINE=Lua
+#     Tell luv to use standard Lua (not LuaJIT).
+#
+#   -DLUA_BUILD_TYPE=System
+#     Tell luv not to try building Lua itself — use our pre-built one.
+#
+#   -DLUA_INCLUDE_DIR / -DLUA_LIBRARY
+#     Point luv at our Lua headers and static library.
+#
+#   -DBUILD_MODULE=OFF / -DBUILD_SHARED_LIBS=OFF / -DBUILD_STATIC_LIBS=ON
+#     Build only the static library, not the shared .so module.
+#     (The shared module is built separately below with different flags.)
+#
+# After cmake builds, we use `find` to locate the output files because
+# cmake's output directory structure varies by platform and version.
+# The `|| { echo ERROR; ... exit 1; }` pattern provides clear error
+# messages if the expected files aren't found.
+#
+# The libuv.a extraction uses a temp file (_libuv_a_path) and sh -c to
+# work around the Make 3.81 $$ bug — the shell variable $p is only used
+# inside the sh -c invocation, never in a Make recipe line.
 
 $(BUILD)/libluv.a: $(LUA_A) $(LUV_DIR)/.libuv-linked
 	@mkdir -p $(LUV_BUILD)
@@ -730,6 +1233,17 @@ $(BUILD)/libluv.a: $(LUA_A) $(LUV_DIR)/.libuv-linked
 	  else echo "ERROR: libuv.a not found in luv build tree"; \
 	       find $(LUV_BUILD) -name "*.a"; exit 1; fi'
 
+# ---------------------------------------------------------------------------
+# Build luv.so (shared module) and libluv.so (shared library)
+# ---------------------------------------------------------------------------
+#
+# Built in a separate cmake directory (shared/) to avoid conflicts with
+# the static build above.  This time BUILD_MODULE=ON and BUILD_SHARED_LIBS=ON.
+#
+# Note: we link against $(LUA_SO) (shared liblua) here, not $(LUA_A).
+# Shared modules must link against the shared library to avoid symbol
+# duplication at runtime.
+
 $(BUILD)/luv.$(LUA_MOD_EXT): $(BUILD)/libluv.a $(LUA_SO)
 	@mkdir -p $(LUV_BUILD)/shared
 	cd $(LUV_BUILD)/shared && $(CMAKE) \
@@ -744,6 +1258,7 @@ $(BUILD)/luv.$(LUA_MOD_EXT): $(BUILD)/libluv.a $(LUA_SO)
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD)/shared -j$(NPROC)
 	@# luv's Lua module is always named luv.so regardless of platform
+	@# (see LUA_MOD_EXT discussion above)
 	find $(LUV_BUILD)/shared -name 'luv.so' -exec cp {} $@ \;
 	@test -f $@ || { echo "ERROR: luv.so not found"; \
 	  find $(LUV_BUILD)/shared -name '*.so' -o -name '*.dylib'; exit 1; }
@@ -759,6 +1274,9 @@ luv: $(BUILD)/libluv.a $(BUILD)/luv.$(LUA_MOD_EXT) $(BUILD)/libluv.$(SHARED_EXT)
 # =============================================================================
 # 4. LUAFILESYSTEM (lfs)
 # =============================================================================
+#
+# The simplest C module — a single source file (lfs.c) that compiles to
+# one object, which becomes both a static lib and a shared module.
 
 $(BUILD)/lfs-obj/lfs.o: $(LFS_DIR) $(LUA_A)
 	@mkdir -p $(BUILD)/lfs-obj
@@ -770,6 +1288,7 @@ $(BUILD)/liblfs.a: $(BUILD)/lfs-obj/lfs.o
 	$(AR) rcs $@ $<
 	$(RANLIB) $@
 
+# Link the shared module against liblua.so (-L$(BUILD) -llua).
 $(BUILD)/lfs.$(LUA_MOD_EXT): $(BUILD)/lfs-obj/lfs.o $(LUA_SO)
 	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
@@ -779,8 +1298,11 @@ lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(LUA_MOD_EXT)
 # =============================================================================
 # 5. LPEG
 # =============================================================================
+#
+# lpeg has multiple C source files (lp*.c), so we use the cd+glob pattern.
+# The lp* glob catches lpcode.c, lpcap.c, lptree.c, lpvm.c, lpprint.c
+# without hardcoding the list.
 
-# Compile via cd + glob (same pattern as lua)
 $(BUILD)/lpeg-obj/.built: $(LUA_A) $(LPEG_DIR)
 	@mkdir -p $(BUILD)/lpeg-obj
 	cd $(LPEG_DIR) && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
@@ -801,6 +1323,10 @@ lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT)
 # =============================================================================
 # 6. LUA-TERM
 # =============================================================================
+#
+# Another single-file C module.  The C part (core.c) provides terminal
+# detection (isatty, etc.); the Lua parts (term/init.lua, cursor.lua,
+# colors.lua) provide the higher-level API.
 
 $(BUILD)/luaterm-obj/core.o: $(LUATERM_DIR) $(LUA_A)
 	@mkdir -p $(BUILD)/luaterm-obj
@@ -811,6 +1337,9 @@ $(BUILD)/libluaterm.a: $(BUILD)/luaterm-obj/core.o
 	$(AR) rcs $@ $<
 	$(RANLIB) $@
 
+# The output is named term_core.so (not core.so) to avoid ambiguity.
+# At install time, it's placed at lib/lua/5.4/term/core.so, which is
+# where require("term.core") expects to find it.
 $(BUILD)/term_core.$(LUA_MOD_EXT): $(BUILD)/luaterm-obj/core.o $(LUA_SO)
 	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
@@ -820,8 +1349,12 @@ luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
 # =============================================================================
 # 7. DKJSON (pure Lua)
 # =============================================================================
+#
+# No compilation needed — just copy the single .lua file to the build
+# directory's lua-modules/ folder where the test harness can find it.
+# Note: this target doesn't have a phony declaration with prerequisites
+# in the standard pattern — it depends directly on the downloaded file.
 
-# dkjson target: copy to a discoverable name
 dkjson: $(DKJSON_FILE)
 	@mkdir -p $(BUILD)/lua-modules
 	cp $(DKJSON_FILE) $(BUILD)/lua-modules/dkjson.lua
@@ -830,20 +1363,37 @@ dkjson: $(DKJSON_FILE)
 # 8. FULLY STATIC LUA INTERPRETER
 # =============================================================================
 #
-# The C module preload table lives in src/lr_preload.c (checked in). The
-# pure-Lua modules (re, dkjson, term/*, posix/*) are embedded as C byte arrays
-# generated by scripts/lua2c.sh at build time, loaded via src/lr_preload_lua.c.
+# Builds a single binary (lua-static) that has ALL C modules linked in
+# statically and ALL pure-Lua modules embedded as C byte arrays.
 #
-# Instead of patching linit.c, we patch lua.c — inserting calls to
-# preload_bundled_modules(L) and preload_bundled_lua_modules(L) after
-# luaL_openlibs(L).  Same pattern as RELOCATABLE=1.
+# Architecture:
+#
+#   src/lr_preload.c    — registers C module luaopen_* functions in
+#                         package.preload so require() finds them without
+#                         searching the filesystem.
+#
+#   src/lr_preload_lua.c — loads embedded Lua modules from C byte arrays.
+#                          The byte arrays are generated by scripts/lua2c.sh
+#                          into a header file at build time.
+#
+#   lua_static.c        — a patched copy of lua.c with calls to both
+#                          preload functions inserted after luaL_openlibs(L).
+#
+# The result is a single binary that can run Lmod (or any Lua script using
+# the bundled modules) without ANY external files.
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 
-# ---- Collect pure-Lua module sources ----------------------------------------
+# ---------------------------------------------------------------------------
+# Collect pure-Lua module sources for embedding
+# ---------------------------------------------------------------------------
 #
-# Each entry is  module.name:path/to/file.lua
-# The module name is what you'd pass to require().
+# Each entry has the format:  module.name:path/to/file.lua
+#
+# The module name is what you'd pass to require().  For example:
+#   term.cursor:$(LUATERM_DIR)/term/cursor.lua
+# means that require("term.cursor") will load the embedded version
+# of this file.
 
 LUA_EMBED_MODULES = \
 	re:$(LPEG_DIR)/re.lua \
@@ -852,10 +1402,30 @@ LUA_EMBED_MODULES = \
 	term.cursor:$(LUATERM_DIR)/term/cursor.lua \
 	term.colors:$(LUATERM_DIR)/term/colors.lua
 
-# luaposix pure-Lua modules — discovered dynamically from the source tree.
-# Uses find+sed in a $(shell ...) call; the names match require() paths.
-# Example: luaposix-36.2.1/lib/posix/init.lua → posix
-#          luaposix-36.2.1/lib/posix/compat.lua → posix.compat
+# ---------------------------------------------------------------------------
+# Discover luaposix pure-Lua modules dynamically
+# ---------------------------------------------------------------------------
+#
+# luaposix has many pure-Lua files (posix/init.lua, posix/compat.lua, etc.)
+# that we need to embed.  Rather than hardcoding the list (which would break
+# if upstream adds or removes files), we discover them with find+sed.
+#
+# The $(shell ...) call runs at Makefile parse time:
+#   find $(LUAPOSIX_DIR)/lib/posix -name '*.lua' | sort | while read f; do
+#     rel=$(echo "$f" | sed '...')
+#     echo "$rel:$f"
+#   done
+#
+# The sed transformations convert filesystem paths to Lua module names:
+#   luaposix-36.2.1/lib/posix/init.lua   → posix      (init.lua → parent name)
+#   luaposix-36.2.1/lib/posix/compat.lua → posix.compat
+#   luaposix-36.2.1/lib/posix/sys/stat.lua → posix.sys.stat
+#
+# Specifically:
+#   s|^$(LUAPOSIX_DIR)/lib/||   — strip the source tree prefix
+#   s|/init\.lua$||             — init.lua files map to the directory name
+#   s|\.lua$||                  — strip the .lua extension
+#   s|/|.|g                     — convert path separators to dots
 LUAPOSIX_LUA_MODULES := $(shell \
 	if [ -d $(LUAPOSIX_DIR)/lib/posix ]; then \
 	  find $(LUAPOSIX_DIR)/lib/posix -name '*.lua' | sort | while read f; do \
@@ -864,37 +1434,66 @@ LUAPOSIX_LUA_MODULES := $(shell \
 	  done; \
 	fi)
 
-# We also need posix.version which doesn't exist in the source tree
-# (luke generates it).  Create it at build time.
+# posix.version doesn't exist in the luaposix source tree — it's normally
+# generated by luke (luaposix's build system) at build time.  We create it
+# ourselves so that require("posix.version") works in the static binary.
 $(BUILD)/posix_version.lua: $(LUAPOSIX_DIR)
 	@mkdir -p $(BUILD)
 	@echo 'return "luaposix $(LUAPOSIX_VER)"' > $@
 
+# Combine all module lists.  LUA_EMBED_ALL is the complete set of
+# pure-Lua modules to embed in the static binary.
 LUA_EMBED_ALL = $(LUA_EMBED_MODULES) \
 	$(LUAPOSIX_LUA_MODULES) \
 	posix.version:$(BUILD)/posix_version.lua
 
-# ---- Generate the byte-array header ----------------------------------------
+# ---------------------------------------------------------------------------
+# Generate the byte-array header
+# ---------------------------------------------------------------------------
+#
+# scripts/lua2c.sh reads each Lua file and converts it to a C byte array.
+# The output is a header file containing declarations like:
+#
+#   static const unsigned char lr_lua_module_re[] = { 0x2d, 0x2d, ... };
+#   static const unsigned char lr_lua_module_dkjson[] = { ... };
+#   ...
+#
+# These arrays are compiled into the static binary and loaded at startup
+# by lr_preload_lua.c.
 
 $(BUILD)/static-lua/lr_lua_module_data.h: $(LPEG_DIR) $(LUATERM_DIR) \
                                            $(LUAPOSIX_DIR) $(BUILD)/posix_version.lua
 	@mkdir -p $(BUILD)/static-lua
 	sh scripts/lua2c.sh $@ $(LUA_EMBED_ALL)
 
-# ---- Patch lua.c ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Patch lua.c for the static binary
+# ---------------------------------------------------------------------------
+#
+# Same awk pattern as the RELOCATABLE case: insert function calls after
+# luaL_openlibs(L).  Here we insert TWO calls:
+#   preload_bundled_modules(L)      — registers C module luaopen_* functions
+#   preload_bundled_lua_modules(L)  — registers embedded Lua modules
 
 $(BUILD)/static-lua/lua_static.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua
 	awk '{print} /luaL_openlibs\(L\)/{print "  preload_bundled_modules(L);\n  preload_bundled_lua_modules(L);"}' \
 	  $(LUA_SRC)/lua.c > $@
 
-# ---- Compile the preload modules -------------------------------------------
+# ---------------------------------------------------------------------------
+# Compile the preload modules
+# ---------------------------------------------------------------------------
+#
+# $< is the first prerequisite (the .c file).  -c means "compile only,
+# don't link" — produce a .o file.
 
 $(BUILD)/static-lua/lr_preload.o: src/lr_preload.c src/lr_preload.h $(LUA_DIR)
 	@mkdir -p $(BUILD)/static-lua
 	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -Isrc \
 	  -c -o $@ $<
 
+# -I$(BUILD)/static-lua is needed so lr_preload_lua.c can find the
+# generated lr_lua_module_data.h header.
 $(BUILD)/static-lua/lr_preload_lua.o: src/lr_preload_lua.c src/lr_preload_lua.h \
                                        $(BUILD)/static-lua/lr_lua_module_data.h $(LUA_DIR)
 	@mkdir -p $(BUILD)/static-lua
@@ -902,7 +1501,30 @@ $(BUILD)/static-lua/lr_preload_lua.o: src/lr_preload_lua.c src/lr_preload_lua.h 
 	  -I$(BUILD)/static-lua \
 	  -c -o $@ $<
 
-# ---- Link the static binary ------------------------------------------------
+# ---------------------------------------------------------------------------
+# Link the static binary
+# ---------------------------------------------------------------------------
+#
+# This is the final link step that produces lua-static.  It combines:
+#   - The patched lua.c (with preload calls)
+#   - The preload .o files (C module registration + Lua module embedding)
+#   - liblua.a (the Lua runtime)
+#   - All C module static libraries
+#
+# -include src/lr_preload.h / -include src/lr_preload_lua.h
+#   Force-include the preload headers so the patched lua.c can call
+#   preload_bundled_modules() and preload_bundled_lua_modules() without
+#   modifying lua.c's #include directives.
+#
+# $(STATIC_EXTRA) expands to -static on Linux (truly static binary)
+# or empty on macOS (can't fully static-link on macOS).
+#
+# The order of .a files matters for the linker: libraries must come AFTER
+# the objects that reference them.  lua_static.c references liblua symbols,
+# and the preload modules reference both liblua and the C module symbols.
+#
+# `file $@` at the end prints the binary's type (ELF, Mach-O, static vs
+# dynamic) as a quick sanity check.
 
 $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c \
                     $(BUILD)/static-lua/lr_preload.o \
@@ -937,7 +1559,22 @@ static-lua: $(STATIC_LUA_BIN)
 # 9. TEST
 # =============================================================================
 
-# TEST_LUA: only dkjson on LUA_PATH, let C searcher handle everything else
+# ---------------------------------------------------------------------------
+# TEST_LUA — the command prefix for running tests
+# ---------------------------------------------------------------------------
+#
+# Sets LUA_PATH and LUA_CPATH environment variables for the test run.
+# These point at the build directory so the just-built modules can be
+# found without installing first.
+#
+# The ;; at the end of each path appends Lua's compiled-in default paths
+# (from luaconf.h) to the search list.  This means any module NOT in our
+# build tree can still be found via the default paths.
+#
+# LUA_PATH: only dkjson needs this (it's pure Lua, copied to lua-modules/).
+# LUA_CPATH: the complex path handles luaposix's nested .so layout
+#   (posix/unistd.so, posix/sys/stat.so) plus flat modules (luv.so,
+#   lfs.so, lpeg.so) and lua-term's oddly-named term_core.so.
 TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
            LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);$(BUILD)/term_core.$(LUA_MOD_EXT);;" \
            $(LUA_BIN)
@@ -946,7 +1583,21 @@ TEST_DEPS = $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
             $(BUILD)/lfs.$(LUA_MOD_EXT) $(BUILD)/lpeg.$(LUA_MOD_EXT) \
             $(BUILD)/term_core.$(LUA_MOD_EXT) $(DKJSON_FILE)
 
-# ---- Quick smoke test (inline heredoc) --------------------------------------
+# ---------------------------------------------------------------------------
+# Quick smoke test — embedded Lua script via heredoc
+# ---------------------------------------------------------------------------
+#
+# `define VAR ... endef` is GNU Make's multi-line variable syntax.  It
+# captures everything between define and endef (including newlines) as the
+# variable's value.  Combined with `export VAR`, the shell can access it
+# as an environment variable.
+#
+# `echo "$$TEST_SCRIPT"` expands the environment variable (double $$ because
+# Make eats one $) and writes it to a .lua file, which is then executed.
+#
+# This is a clever way to embed a complete Lua test script in the Makefile
+# without needing an external test file.  The `quicktest` target uses this
+# inline script, while the `test` target uses the external test/test_bundled.lua.
 
 define TEST_SCRIPT
 local pass, fail = 0, 0
@@ -1074,14 +1725,15 @@ quicktest: $(TEST_DEPS)
 	@mkdir -p $(BUILD)
 	@echo "$$TEST_SCRIPT" > $(BUILD)/test_quick.lua
 	$(TEST_LUA) $(BUILD)/test_quick.lua
+	@# If the static binary exists, test it too.  The `if` guard avoids
+	@# a hard failure when static-lua hasn't been built.
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  echo ""; echo "=== Testing static binary (quick) ==="; echo ""; \
 	  LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
 	    $(STATIC_LUA_BIN) $(BUILD)/test_quick.lua; \
 	fi
 
-# ---- Comprehensive test (test/test_bundled.lua) -----------------------------
-
+# Comprehensive test using the external test file.
 .PHONY: test
 test: $(TEST_DEPS)
 	$(TEST_LUA) test/test_bundled.lua
@@ -1094,6 +1746,16 @@ test: $(TEST_DEPS)
 # =============================================================================
 # 10. INSTALL
 # =============================================================================
+#
+# Each install-* target creates its directories with `install -d` and copies
+# files with `install -m <mode>`.  The install(1) command is preferred over
+# cp because it:
+#   - Creates parent directories atomically (-d flag)
+#   - Sets file permissions explicitly (-m flag)
+#   - Is the POSIX-standard tool for installation
+#
+# Mode 755 = rwxr-xr-x (executables and shared libraries)
+# Mode 644 = rw-r--r-- (headers, static libraries, data files)
 
 .PHONY: install-lua install-luaposix install-luv install-lfs install-lpeg \
         install-luaterm install-dkjson install-pkgconfig
@@ -1104,15 +1766,39 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	install -m 755 $(LUAC_BIN) $(PREFIX)/bin/luac
 	install -m 644 $(LUA_A) $(PREFIX)/lib/liblua.a
 	install -m 755 $(LUA_SO) $(PREFIX)/lib/liblua.$(SHARED_EXT)
+	# Create a versioned symlink (liblua5.4.so → liblua.so) for
+	# build systems that look for the versioned name.
 	cd $(PREFIX)/lib && ln -sf liblua.$(SHARED_EXT) liblua$(LUA_SHORT).$(SHARED_EXT)
+	# Install ALL headers dynamically — version-resilient (no hardcoded list).
 	cd $(LUA_SRC) && find . -name '*.h' -exec install -m 644 {} $(PREFIX)/include/ \;
 	cd $(LUA_SRC) && find . -name '*.h' -exec install -m 644 {} $(PREFIX)/include/lua$(LUA_SHORT)/ \;
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  install -m 755 $(STATIC_LUA_BIN) $(PREFIX)/bin/lua-static; \
 	fi
 
-# FIX: use 'sh -c ... _ {}' pattern so {} is passed as $1, which is
-# portable across all find implementations (avoids "{}" shell expansion issues).
+# ---------------------------------------------------------------------------
+# install-luaposix
+# ---------------------------------------------------------------------------
+#
+# The find -exec sh -c '...' _ {} pattern explained:
+#
+#   find . -name '*.so' -exec sh -c '
+#     d="$(PREFIX)/lib/lua/5.4/$(dirname "$1")"
+#     install -d "$d"
+#     install -m 755 "$1" "$d/"
+#   ' _ {} \;
+#
+# For each file found, find runs: sh -c '<script>' _ <found-file>
+#
+# Inside sh -c:
+#   $0 = _ (a dummy placeholder — convention for the "script name")
+#   $1 = the found file path (substituted for {})
+#
+# Why not just use {} directly inside the -exec command?
+# Because {} might contain characters that the shell interprets specially,
+# and some find implementations don't substitute {} inside quoted strings.
+# The sh -c '...' _ {} pattern is the portable, POSIX-blessed way to use
+# find results in complex commands.
 install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	install -d $(PREFIX)/lib $(PREFIX)/share/lua/$(LUA_SHORT)/posix
 	install -m 644 $(BUILD)/libluaposix.a $(PREFIX)/lib/
@@ -1128,13 +1814,17 @@ install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	fi
 	@# posix.version is generated by luaposix's own build system (luke)
 	@# at build time — it doesn't exist in the source tree.  We generate
-	@# it ourselves so that require("posix") succeeds.
+	@# it ourselves so that require("posix") succeeds (posix/init.lua
+	@# calls require("posix.version") internally).
 	@echo 'return "luaposix $(LUAPOSIX_VER)"' \
 	  > $(PREFIX)/share/lua/$(LUA_SHORT)/posix/version.lua
 
 install-luv: $(BUILD)/libluv.a $(BUILD)/luv.$(LUA_MOD_EXT) $(LIBUV_A)
 	install -d $(PREFIX)/lib $(PREFIX)/lib/lua/$(LUA_SHORT) $(PREFIX)/include
 	install -m 644 $(BUILD)/libluv.a $(PREFIX)/lib/
+	# Install libuv as libluv_libuv.a — the "luv_" prefix makes it clear
+	# this is the libuv bundled with luv (avoids colliding with any
+	# system-installed libuv).
 	install -m 644 $(LIBUV_A) $(PREFIX)/lib/libluv_libuv.a
 	install -m 755 $(BUILD)/luv.$(LUA_MOD_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/luv.$(LUA_MOD_EXT)
 	install -m 755 $(BUILD)/libluv.$(SHARED_EXT) $(PREFIX)/lib/
@@ -1151,6 +1841,8 @@ install-lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT)
 	install -d $(PREFIX)/lib $(PREFIX)/lib/lua/$(LUA_SHORT) $(PREFIX)/share/lua/$(LUA_SHORT)
 	install -m 644 $(BUILD)/liblpeg.a $(PREFIX)/lib/
 	install -m 755 $(BUILD)/lpeg.$(LUA_MOD_EXT) $(PREFIX)/lib/lua/$(LUA_SHORT)/lpeg.$(LUA_MOD_EXT)
+	# re.lua ships with lpeg and provides a regex-like interface on top
+	# of PEG patterns.  It's a pure-Lua file, so it goes in share/.
 	@if [ -f $(LPEG_DIR)/re.lua ]; then \
 	  install -m 644 $(LPEG_DIR)/re.lua $(PREFIX)/share/lua/$(LUA_SHORT)/re.lua; \
 	fi
@@ -1160,6 +1852,8 @@ install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
 	           $(PREFIX)/lib/lua/$(LUA_SHORT)/term \
 	           $(PREFIX)/share/lua/$(LUA_SHORT)/term
 	install -m 644 $(BUILD)/libluaterm.a $(PREFIX)/lib/
+	# Install as term/core.so — Lua's require("term.core") searches for
+	# term/core.so on package.cpath.
 	install -m 755 $(BUILD)/term_core.$(LUA_MOD_EXT) \
 	  $(PREFIX)/lib/lua/$(LUA_SHORT)/term/core.$(LUA_MOD_EXT)
 	cd $(LUATERM_DIR)/term && find . -name '*.lua' -exec install -m 644 {} \
@@ -1169,6 +1863,18 @@ install-dkjson: $(DKJSON_FILE)
 	install -d $(PREFIX)/share/lua/$(LUA_SHORT)
 	install -m 644 $(DKJSON_FILE) $(PREFIX)/share/lua/$(LUA_SHORT)/dkjson.lua
 
+# ---------------------------------------------------------------------------
+# Generate pkg-config file
+# ---------------------------------------------------------------------------
+#
+# pkg-config (.pc) files let other build systems find our Lua installation:
+#   pkg-config --cflags lua5.4   →  -I/opt/lua-regolith/include
+#   pkg-config --libs lua5.4     →  -L/opt/lua-regolith/lib -llua -lm -ldl
+#
+# The $${prefix} syntax inside the heredoc is NOT a Make variable — the
+# $$ escapes to a single $, and ${prefix} is a pkg-config variable
+# reference that gets resolved when pkg-config reads the file.
+# In the .pc file, the line reads: exec_prefix=${prefix}
 install-pkgconfig:
 	install -d $(PREFIX)/lib/pkgconfig
 	@{ \
