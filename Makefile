@@ -282,19 +282,25 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 # 1. LUA
 # =============================================================================
 #
-# IMPORTANT — macOS compatibility note:
+# IMPORTANT — macOS / Make 3.81 compatibility notes:
 #
-# macOS ships GNU Make 3.81, which has broken $$ escaping in multi-line
-# recipes.  Writing $$src gets parsed as $$s + rc (Make expands $s as
-# empty, leaving "rc").  Even $${src} doesn't help — Make expands
-# ${src} as a Make variable.
+# macOS ships GNU Make 3.81, which has two relevant bugs:
 #
-# The fix throughout this Makefile: NEVER use shell loop variables in
-# Make recipes.  Instead use one of:
-#   a) "cd dir && cc -c *.c" then "mv *.o dest/ && rm unwanted.o"
-#   b) Write a helper .sh script with printf, then sh it
-#   c) Use find -exec sh -c '...' _ {} \; for install loops
-#      (passing {} as $1 avoids shell expansion issues with "{}").
+# BUG 1 — Broken $$ escaping in multi-line recipes:
+#   $$src in a multi-line (\-continued) recipe is parsed as $$s + rc,
+#   where Make expands $s as empty, leaving just "rc". Even $${src}
+#   doesn't help — Make expands ${src} as a Make variable.
+#   Fix: never use $$varname in multi-line recipes. Use one of:
+#     a) cd dir && cc -c *.c; mv *.o dest/ (glob, no shell vars)
+#     b) Write helper .sh scripts with printf, one recipe line per
+#        printf call, using \044 (printf octal for $) so shell vars
+#        survive Make expansion intact.
+#     c) find -exec sh -c '...' _ {} \; (positional args, no loop var)
+#
+# BUG 2 — awk '{print $NF}' in generated scripts:
+#   When building scripts with printf inside a Make recipe, awk's $NF
+#   would need $$NF which hits BUG 1. Replace with sed 's/.* //'
+#   (last-field extraction) to avoid any $ in the printf call.
 
 LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
@@ -388,19 +394,28 @@ $(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
 	$(AR) rcs $@ $(BUILD)/luaposix-obj/*.o
 	$(RANLIB) $@
 
-# Build .so modules — uses a helper script to avoid Make $$ issues
+# Build .so modules via a generated helper script.
+#
+# Shell variables in the generated script are written using \044 (the
+# printf octal escape for $).  This survives Make expansion (Make never
+# sees a bare $) and shell quoting (single-quoted printf args pass
+# \044 to printf literally), and printf converts \044 → $ when writing
+# the script file.  awk '{print $NF}' is replaced by sed 's/.* //'
+# to avoid needing any $ in the printf format strings at all.
+#
+# Each printf is a separate single-line Make recipe to further sidestep
+# the Make 3.81 multi-line $$ bug, though \044 would be safe regardless.
 $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@mkdir -p $(BUILD)/luaposix-so
-	@printf '%s\n' '#!/bin/sh' \
-	  'set -e' \
-	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
-	  '  sym=$(nm -g "$obj" 2>/dev/null | grep " T.*luaopen_" | head -1 | awk '"'"'{print $NF}'"'"' | sed "s/^_//")' \
-	  '  if [ -z "$sym" ]; then continue; fi' \
-	  '  relpath=$(echo "$sym" | sed "s/^luaopen_//" | sed "s/_/\//g")' \
-	  '  dir=$(dirname "$relpath")' \
-	  '  mkdir -p "'"$(BUILD)"'/luaposix-so/$dir"' \
-	  '  $(CC) $(SHARED_LINK) -o "'"$(BUILD)"'/luaposix-so/${relpath}.$(LUA_MOD_EXT)" "$obj" -L'"$(BUILD)"' -llua $(LDFLAGS_LUA)' \
-	  'done' > $(BUILD)/_build_posix_so.sh
+	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_build_posix_so.sh
+	@printf 'for obj in %s/luaposix-obj/*.o; do\n' '$(BUILD)' >> $(BUILD)/_build_posix_so.sh
+	@printf '  sym=\044(nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | head -1 | sed '"'"'s/.* //;s/^_//'"'"')\n' >> $(BUILD)/_build_posix_so.sh
+	@printf '  if [ -z "\044sym" ]; then continue; fi\n' >> $(BUILD)/_build_posix_so.sh
+	@printf '  relpath=\044(echo "\044sym" | sed '"'"'s/^luaopen_//;s|_|/|g'"'"')\n' >> $(BUILD)/_build_posix_so.sh
+	@printf '  dir=\044(dirname "\044relpath")\n' >> $(BUILD)/_build_posix_so.sh
+	@printf '  mkdir -p "%s/luaposix-so/\044dir"\n' '$(BUILD)' >> $(BUILD)/_build_posix_so.sh
+	@printf '  %s %s -o "%s/luaposix-so/\044{relpath}.%s" "\044obj" -L%s -llua %s\n' '$(CC)' '$(SHARED_LINK)' '$(BUILD)' '$(LUA_MOD_EXT)' '$(BUILD)' '$(LDFLAGS_LUA)' >> $(BUILD)/_build_posix_so.sh
+	@printf 'done\n' >> $(BUILD)/_build_posix_so.sh
 	@sh $(BUILD)/_build_posix_so.sh
 	@touch $@
 
@@ -552,49 +567,50 @@ dkjson: $(DKJSON_FILE)
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 
-# Generate preload_modules.c via helper script
+# Generate preload_modules.c via a helper script.
+# Uses the same \044 technique as the luaposix-so recipe to avoid the
+# Make 3.81 multi-line $$ bug.  awk '{print $NF}' → sed 's/.* //'.
 $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
                              $(BUILD)/liblfs.a $(BUILD)/liblpeg.a \
                              $(BUILD)/libluaterm.a
 	@mkdir -p $(BUILD)
-	@printf '%s\n' '#!/bin/sh' \
-	  'echo "/* Auto-generated */"' \
-	  'echo "#include \"lua.h\""' \
-	  'echo "#include \"lauxlib.h\""' \
-	  'echo "#include \"lualib.h\""' \
-	  'echo ""' \
-	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
-	  '  nm -g "$$obj" 2>/dev/null | grep " T.*luaopen_" | awk '"'"'{print $$NF}'"'"' | sed "s/^_//" | while read s; do' \
-	  '    echo "int $${s}(lua_State *L);"' \
-	  '  done' \
-	  'done' \
-	  'echo "int luaopen_luv(lua_State *L);"' \
-	  'echo "int luaopen_lfs(lua_State *L);"' \
-	  'echo "int luaopen_lpeg(lua_State *L);"' \
-	  'echo "int luaopen_term_core(lua_State *L);"' \
-	  'echo ""' \
-	  'echo "static const struct { const char *name; lua_CFunction func; } bundled[] = {"' \
-	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
-	  '  nm -g "$$obj" 2>/dev/null | grep " T.*luaopen_" | awk '"'"'{print $$NF}'"'"' | sed "s/^_//" | while read s; do' \
-	  '    m=$$(echo "$$s" | sed "s/^luaopen_//" | sed "s/_/./g")' \
-	  '    echo "  { \"$$m\", $$s },"' \
-	  '  done' \
-	  'done' \
-	  'echo "  { \"luv\", luaopen_luv },"' \
-	  'echo "  { \"lfs\", luaopen_lfs },"' \
-	  'echo "  { \"lpeg\", luaopen_lpeg },"' \
-	  'echo "  { \"term.core\", luaopen_term_core },"' \
-	  'echo "  { NULL, NULL }"' \
-	  'echo "};"' \
-	  'echo ""' \
-	  'echo "void preload_bundled_modules(lua_State *L) {"' \
-	  'echo "  luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);"' \
-	  'echo "  for (int i = 0; bundled[i].name; i++) {"' \
-	  'echo "    lua_pushcfunction(L, bundled[i].func);"' \
-	  'echo "    lua_setfield(L, -2, bundled[i].name);"' \
-	  'echo "  }"' \
-	  'echo "  lua_pop(L, 1);"' \
-	  'echo "}"' > $(BUILD)/_gen_preload.sh
+	@printf '#!/bin/sh\n' > $(BUILD)/_gen_preload.sh
+	@printf 'echo "/* Auto-generated */"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'#include "lua.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'#include "lauxlib.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'#include "lualib.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo ""\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'for obj in %s/luaposix-obj/*.o; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
+	@printf '  nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | sed '"'"'s/.* //;s/^_//'"'"' | while read s; do\n' >> $(BUILD)/_gen_preload.sh
+	@printf '    echo "int \044{s}(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf '  done\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'done\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "int luaopen_luv(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "int luaopen_lfs(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "int luaopen_lpeg(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "int luaopen_term_core(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo ""\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "static const struct { const char *name; lua_CFunction func; } bundled[] = {"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'for obj in %s/luaposix-obj/*.o; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
+	@printf '  nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | sed '"'"'s/.* //;s/^_//'"'"' | while read s; do\n' >> $(BUILD)/_gen_preload.sh
+	@printf '    m=\044(echo "\044s" | sed '"'"'s/^luaopen_//;s|_|.|g'"'"')\n' >> $(BUILD)/_gen_preload.sh
+	@printf '    echo "  { \\\\"\044m\\\\", \044s },"\n' >> $(BUILD)/_gen_preload.sh
+	@printf '  done\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'done\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'  { "luv", luaopen_luv },'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'  { "lfs", luaopen_lfs },'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'  { "lpeg", luaopen_lpeg },'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'  { "term.core", luaopen_term_core },'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo '"'"'  { NULL, NULL }'"'"'\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "};\n"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "void preload_bundled_modules(lua_State *L) {"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "  luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "  for (int i = 0; bundled[i].name; i++) {"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "    lua_pushcfunction(L, bundled[i].func);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "    lua_setfield(L, -2, bundled[i].name);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "  }"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "  lua_pop(L, 1);"\n' >> $(BUILD)/_gen_preload.sh
+	@printf 'echo "}"\n' >> $(BUILD)/_gen_preload.sh
 	@sh $(BUILD)/_gen_preload.sh > $@
 
 # Patch linit.c using awk (no shell variables needed)
@@ -815,12 +831,12 @@ install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	install -m 644 $(BUILD)/libluaposix.a $(PREFIX)/lib/
 	cd $(BUILD)/luaposix-so && \
 	  find . -name '*.$(LUA_MOD_EXT)' -exec sh -c \
-	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$(dirname "$1")"; install -d "$d"; install -m 755 "$1" "$d/"' \
+	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$$(dirname "$$1")"; install -d "$$d"; install -m 755 "$$1" "$$d/"' \
 	    _ {} \;
 	@if [ -d $(LUAPOSIX_DIR)/lib/posix ]; then \
 	  cd $(LUAPOSIX_DIR)/lib && \
 	  find posix -name '*.lua' -exec sh -c \
-	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$(dirname "$1")"; install -d "$d"; install -m 644 "$1" "$d/"' \
+	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$$(dirname "$$1")"; install -d "$$d"; install -m 644 "$$1" "$$d/"' \
 	    _ {} \; ; \
 	fi
 
