@@ -654,21 +654,26 @@ $(BUILD)/luaposix-obj/.built-sys: $(LUA_A) $(LUAPOSIX_DIR) $(LUAPOSIX_CONFIG_H)
 $(BUILD)/luaposix-obj/.built: $(BUILD)/luaposix-obj/.built-top $(BUILD)/luaposix-obj/.built-sys
 	@touch $@
 
+# Archive all luaposix objects EXCEPT posix.o (the monolithic convenience
+# module).  posix.o re-exports luaopen_* symbols that the individual submodule
+# .o files already define, causing duplicate symbol errors at link time.  The
+# top-level require("posix") is handled by the pure-Lua posix/init.lua instead.
 $(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
-	$(AR) rcs $@ $(BUILD)/luaposix-obj/*.o
+	rm -f $@
+	find $(BUILD)/luaposix-obj -name '*.o' ! -name 'posix.o' | sort | xargs $(AR) rcs $@
 	$(RANLIB) $@
 
 # Build .so modules via a generated helper script.
 #
-# Shell variables in the generated script are written using \044 (the
-# printf octal escape for $).  This survives Make expansion (Make never
-# sees a bare $) and shell quoting (single-quoted printf args pass
-# \044 to printf literally), and printf converts \044 → $ when writing
-# the script file.  awk '{print $NF}' is replaced by sed 's/.* //'
-# to avoid needing any $ in the printf format strings at all.
+# Shell variables in the generated script are written using \044 (the printf
+# octal escape for $).  This survives Make expansion (Make never sees a bare $)
+# and shell quoting (single-quoted printf args pass \044 to printf literally),
+# and printf converts \044 → $ when writing the script file.  awk '{print $NF}'
+# is replaced by sed 's/.* //' to avoid needing any $ in the printf format
+# strings at all.
 #
-# Each printf is a separate single-line Make recipe to further sidestep
-# the Make 3.81 multi-line $$ bug, though \044 would be safe regardless.
+# Each printf is a separate single-line Make recipe to further sidestep the
+# Make 3.81 multi-line $$ bug, though \044 would be safe regardless.
 $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@mkdir -p $(BUILD)/luaposix-so
 	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_build_posix_so.sh
@@ -828,94 +833,47 @@ dkjson: $(DKJSON_FILE)
 	cp $(DKJSON_FILE) $(BUILD)/lua-modules/dkjson.lua
 
 # =============================================================================
-# 8. FULLY STATIC LUA INTERPRETER  (bonus)
+# 8. FULLY STATIC LUA INTERPRETER
 # =============================================================================
+#
+# The preload registration table lives in src/lr_preload.c (checked into the
+# repo) rather than being generated at build time.  This eliminates the
+# nm-based symbol discovery, the \044-escaped printf heredocs, and the fragile
+# awk patching of linit.c.
+#
+# Instead of patching linit.c, we patch lua.c — inserting a single call to
+# preload_bundled_modules(L) after luaL_openlibs(L) in pmain(). This is the
+# same pattern used by RELOCATABLE=1 and is robust across Lua versions
+# (luaL_openlibs(L) appears exactly once in lua.c).
+#
+# The original linit.o is kept in the static build; we never touch it.
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 
-# Generate preload_modules.c via a helper script.
-# Uses the same \044 technique as the luaposix-so recipe to avoid the
-# Make 3.81 multi-line $$ bug.  awk '{print $NF}' → sed 's/.* //'.
-$(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
-                             $(BUILD)/liblfs.a $(BUILD)/liblpeg.a \
-                             $(BUILD)/libluaterm.a
-	@mkdir -p $(BUILD)
-	@printf '#!/bin/sh\n' > $(BUILD)/_gen_preload.sh
-	@printf 'echo "/* Auto-generated */"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'#include "lua.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'#include "lauxlib.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'#include "lualib.h"'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo ""\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'find %s/luaposix-obj -name "*.o" | while read obj; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
-	@printf '  nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | sed '"'"'s/.* //;s/^_//'"'"' | while read s; do\n' >> $(BUILD)/_gen_preload.sh
-	@printf '    echo "int \044{s}(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf '  done\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'done\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "int luaopen_luv(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "int luaopen_lfs(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "int luaopen_lpeg(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "int luaopen_term_core(lua_State *L);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo ""\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "static const struct { const char *name; lua_CFunction func; } bundled[] = {"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'find %s/luaposix-obj -name "*.o" | while read obj; do\n' '$(BUILD)' >> $(BUILD)/_gen_preload.sh
-	@printf '  nm -g "\044obj" 2>/dev/null | grep " T.*luaopen_" | sed '"'"'s/.* //;s/^_//'"'"' | while read s; do\n' >> $(BUILD)/_gen_preload.sh
-	@printf '    m=\044(echo "\044s" | sed '"'"'s/^luaopen_//;s|_|.|g'"'"')\n' >> $(BUILD)/_gen_preload.sh
-	@printf '    echo "  { \\\\"\044m\\\\", \044s },"\n' >> $(BUILD)/_gen_preload.sh
-	@printf '  done\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'done\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'  { "luv", luaopen_luv },'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'  { "lfs", luaopen_lfs },'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'  { "lpeg", luaopen_lpeg },'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'  { "term.core", luaopen_term_core },'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo '"'"'  { NULL, NULL }'"'"'\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "};\n"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "void preload_bundled_modules(lua_State *L) {"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "  luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "  for (int i = 0; bundled[i].name; i++) {"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "    lua_pushcfunction(L, bundled[i].func);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "    lua_setfield(L, -2, bundled[i].name);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "  }"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "  lua_pop(L, 1);"\n' >> $(BUILD)/_gen_preload.sh
-	@printf 'echo "}"\n' >> $(BUILD)/_gen_preload.sh
-	@sh $(BUILD)/_gen_preload.sh > $@
-
-# Patch linit.c using awk (no shell variables needed)
-$(BUILD)/static-lua/linit_bundled.c: $(BUILD)/.lua-patched $(BUILD)/preload_modules.c
+# Patch lua.c: insert preload call after luaL_openlibs(L)
+$(BUILD)/static-lua/lua_static.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua
-	@awk '/^#include/{last=NR} {lines[NR]=$$0} END{for(i=1;i<=NR;i++){print lines[i]; if(i==last) print "extern void preload_bundled_modules(lua_State *L);"}}' \
-	  $(LUA_SRC)/linit.c > $@.tmp
-	@awk '/luaL_openlibs/{fn=1} fn && /^}/{print "  preload_bundled_modules(L);"; fn=0} {print}' \
-	  $@.tmp > $@
-	@rm -f $@.tmp
+	awk '{print} /luaL_openlibs\(L\)/{print "  preload_bundled_modules(L);"}' \
+	  $(LUA_SRC)/lua.c > $@
 
-# Compile static binary: cd+glob pattern, no shell variables
-$(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.c \
+# Compile lr_preload.c (the hardcoded module table)
+$(BUILD)/static-lua/lr_preload.o: src/lr_preload.c src/lr_preload.h $(LUA_DIR)
+	@mkdir -p $(BUILD)/static-lua
+	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -Isrc \
+	  -c -o $@ $<
+
+# Compile static binary
+$(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c \
+                    $(BUILD)/static-lua/lr_preload.o \
+                    $(LUA_A) \
                     $(BUILD)/libluaposix.a $(BUILD)/libluv.a $(LIBUV_A) \
-                    $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a \
-                    $(BUILD)/.lua-patched
-	@mkdir -p $(BUILD)/static-lua/obj
-	@# Compile all .c, then remove the three we don't want
-	cd $(LUA_SRC) && $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -c *.c
-	mv $(LUA_SRC)/*.o $(BUILD)/static-lua/obj/
-	rm -f $(BUILD)/static-lua/obj/lua.o $(BUILD)/static-lua/obj/luac.o \
-	      $(BUILD)/static-lua/obj/linit.o
-	@# Compile patched linit + preload
-	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
-	  -c -o $(BUILD)/static-lua/obj/linit_bundled.o \
-	  $(BUILD)/static-lua/linit_bundled.c
-	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
-	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
-	  -I$(CURDIR)/$(LIBUV_DIR)/include \
-	  -I$(CURDIR)/$(LFS_DIR)/src \
-	  -I$(CURDIR)/$(LPEG_DIR) \
-	  -c -o $(BUILD)/static-lua/obj/preload_modules.o \
-	  $(BUILD)/preload_modules.c
-	@# Archive and link
-	$(AR) rcs $(BUILD)/static-lua/liblua-bundled.a $(BUILD)/static-lua/obj/*.o
-	$(RANLIB) $(BUILD)/static-lua/liblua-bundled.a
-	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) -I$(LUA_SRC) -o $@ \
-	  $(LUA_SRC)/lua.c \
-	  $(BUILD)/static-lua/liblua-bundled.a \
+                    $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a
+	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) -I$(LUA_SRC) -Isrc \
+	  -include src/lr_preload.h \
+	  -o $@ \
+	  $(BUILD)/static-lua/lua_static.c \
+	  $(BUILD)/static-lua/lr_preload.o \
+	  $(LUA_A) \
 	  $(BUILD)/libluaposix.a \
 	  $(BUILD)/libluv.a \
 	  $(LIBUV_A) \
@@ -929,6 +887,7 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.
 	@file $@
 
 static-lua: $(STATIC_LUA_BIN)
+
 
 # =============================================================================
 # 9. TEST
