@@ -34,6 +34,8 @@
 # Force POSIX shell for recipes (critical on systems where SHELL may be
 # inherited from the environment, e.g. fish shell on macOS).
 SHELL := /bin/sh
+.SUFFIXES:
+MAKEFLAGS += --no-builtin-rules
 
 # ---- User-configurable knobs ------------------------------------------------
 
@@ -130,10 +132,6 @@ endif
 
 .PHONY: all install clean distclean download verify test static-lua
 
-# Disable all built-in implicit rules and suffixes
-.SUFFIXES:
-MAKEFLAGS += --no-builtin-rules
-
 all: lua liblua-shared luaposix luv lfs lpeg luaterm dkjson
 
 install: all install-lua install-luaposix install-luv \
@@ -202,38 +200,28 @@ $(DKJSON_FILE):
 
 SHA256_CMD := $(shell command -v sha256sum 2>/dev/null || echo "shasum -a 256")
 
+# Verify writes a helper script to avoid Make/shell escaping issues
 verify: download
-	@failed=0; \
-	for pair in \
-	  "lua-$(LUA_VER).tar.gz $(LUA_SHA256)" \
-	  "luaposix-$(LUAPOSIX_VER).tar.gz $(LUAPOSIX_SHA256)" \
-	  "luv-$(LUV_VER).tar.gz $(LUV_SHA256)" \
-	  "libuv-$(LIBUV_VER).tar.gz $(LIBUV_SHA256)" \
-	  "lfs-$(LFS_VER).tar.gz $(LFS_SHA256)" \
-	  "lpeg-$(LPEG_VER).tar.gz $(LPEG_SHA256)" \
-	  "luaterm-$(LUATERM_VER).tar.gz $(LUATERM_SHA256)" \
-	  "$(DKJSON_FILE) $(DKJSON_SHA256)" \
-	; do \
-	  file=$(echo $pair | awk '{print $1}'); \
-	  expect=$(echo $pair | awk '{print $2}'); \
-	  if [ -z "$expect" ]; then \
-	    echo "SKIP  $$file (no checksum configured)"; \
-	    continue; \
-	  fi; \
-	  actual=$$($(SHA256_CMD) "$$file" | cut -d' ' -f1); \
-	  if [ "$$actual" = "$$expect" ]; then \
-	    echo "OK    $$file"; \
-	  else \
-	    echo "FAIL  $$file"; \
-	    echo "  expected: $$expect"; \
-	    echo "  got:      $$actual"; \
-	    failed=1; \
-	  fi; \
-	done; \
-	if [ $$failed -ne 0 ]; then \
-	  echo ""; echo "Checksum verification FAILED."; exit 1; \
-	fi; \
-	echo ""; echo "All configured checksums passed."
+	@mkdir -p $(BUILD)
+	@printf '%s\n' '#!/bin/sh' \
+	  'failed=0' \
+	  'verify_one() {' \
+	  '  if [ -z "$$2" ]; then echo "SKIP  $$1 (no checksum)"; return 0; fi' \
+	  '  got=$$($(SHA256_CMD) "$$1" | awk '"'"'{print $$1}'"'"')' \
+	  '  if [ "$$got" = "$$2" ]; then echo "OK    $$1"' \
+	  '  else echo "FAIL  $$1"; echo "  expected: $$2"; echo "  got:      $$got"; return 1; fi' \
+	  '}' \
+	  'verify_one "lua-$(LUA_VER).tar.gz"           "$(LUA_SHA256)"      || failed=1' \
+	  'verify_one "luaposix-$(LUAPOSIX_VER).tar.gz" "$(LUAPOSIX_SHA256)" || failed=1' \
+	  'verify_one "luv-$(LUV_VER).tar.gz"           "$(LUV_SHA256)"      || failed=1' \
+	  'verify_one "libuv-$(LIBUV_VER).tar.gz"       "$(LIBUV_SHA256)"    || failed=1' \
+	  'verify_one "lfs-$(LFS_VER).tar.gz"           "$(LFS_SHA256)"      || failed=1' \
+	  'verify_one "lpeg-$(LPEG_VER).tar.gz"         "$(LPEG_SHA256)"     || failed=1' \
+	  'verify_one "luaterm-$(LUATERM_VER).tar.gz"   "$(LUATERM_SHA256)"  || failed=1' \
+	  'verify_one "$(DKJSON_FILE)"                  "$(DKJSON_SHA256)"   || failed=1' \
+	  'if [ $$failed -ne 0 ]; then echo "FAILED"; exit 1; fi' \
+	  'echo "All checksums passed."' > $(BUILD)/_verify.sh
+	@sh $(BUILD)/_verify.sh
 
 # ---- Extract ----------------------------------------------------------------
 
@@ -268,16 +256,25 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 # =============================================================================
 # 1. LUA
 # =============================================================================
+#
+# IMPORTANT — macOS compatibility note:
+#
+# macOS ships GNU Make 3.81, which has broken $$ escaping in multi-line
+# recipes.  Writing $$src gets parsed as $$s + rc (Make expands $s as
+# empty, leaving "rc").  Even $${src} doesn't help — Make expands
+# ${src} as a Make variable.
+#
+# The fix throughout this Makefile: NEVER use shell loop variables in
+# Make recipes.  Instead use one of:
+#   a) "cd dir && cc -c *.c" then "mv *.o dest/ && rm unwanted.o"
+#   b) Write a helper .sh script with printf, then sh it
+#   c) Use find -exec sh -c '...' for install loops
 
 LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
 LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
 LUA_BIN   := $(BUILD)/lua
 LUAC_BIN  := $(BUILD)/luac
-
-# Note: Source files are discovered at recipe time via shell globs,
-# NOT at Make parse time.  This is intentional — the source directory
-# doesn't exist until extraction runs.
 
 $(BUILD)/.lua-patched: $(LUA_DIR)
 	@mkdir -p $(BUILD)
@@ -305,36 +302,24 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	    echo '#ifdef LUA_PATH_DEFAULT'; \
 	    echo '#undef LUA_PATH_DEFAULT'; \
 	    echo '#endif'; \
-	    echo '#define LUA_PATH_DEFAULT \\'; \
-	    echo '  LUA_LDIR "?.lua;" LUA_LDIR "?/init.lua;" \\'; \
-	    echo '  LUA_CDIR "?.lua;" LUA_CDIR "?/init.lua;" \\'; \
-	    echo '  "./?.lua;./?/init.lua"'; \
+	    echo '#define LUA_PATH_DEFAULT LUA_LDIR"?.lua;"LUA_LDIR"?/init.lua;"LUA_CDIR"?.lua;"LUA_CDIR"?/init.lua;""./?.lua;./?/init.lua"'; \
 	    echo ''; \
 	    echo '#ifdef LUA_CPATH_DEFAULT'; \
 	    echo '#undef LUA_CPATH_DEFAULT'; \
 	    echo '#endif'; \
-	    echo '#define LUA_CPATH_DEFAULT \\'; \
-	    echo '  LUA_CDIR "?.$(SHARED_EXT);" LUA_CDIR "loadall.$(SHARED_EXT);" \\'; \
-	    echo '  "./?.$(SHARED_EXT)"'; \
+	    echo '#define LUA_CPATH_DEFAULT LUA_CDIR"?.$(SHARED_EXT);"LUA_CDIR"loadall.$(SHARED_EXT);""./?.$(SHARED_EXT)"'; \
 	    echo ''; \
 	    echo '/* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
 	  } >> $(LUA_SRC)/luaconf.h; \
 	fi
 	touch $@
 
-# Note: We compile in the recipe using shell globs rather than Make
-# wildcard prerequisites.  This is because $(wildcard) is evaluated at
-# Makefile parse time, before extraction has occurred, yielding an empty
-# list.  Shell globs in recipes run after the prerequisite (extraction)
-# has completed.
-
+# Compile all .c in src/, then remove lua.o and luac.o
 $(BUILD)/lua-obj/.built: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/lua-obj
-	@for src in $(LUA_SRC)/*.c; do \
-	  case $src in */lua.c|*/luac.c) continue;; esac; \
-	  base=$(basename $src .c); \
-	  $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -c -o $(BUILD)/lua-obj/$base.o $src; \
-	done
+	cd $(LUA_SRC) && $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -c *.c
+	mv $(LUA_SRC)/*.o $(BUILD)/lua-obj/
+	rm -f $(BUILD)/lua-obj/lua.o $(BUILD)/lua-obj/luac.o
 	@touch $@
 
 $(LUA_A): $(BUILD)/lua-obj/.built
@@ -360,43 +345,38 @@ liblua-shared: $(LUA_SO)
 # 2. LUAPOSIX
 # =============================================================================
 
+# Compile all .c in ext/posix/ via cd + glob
 $(BUILD)/luaposix-obj/.built: $(LUA_A) $(LUAPOSIX_DIR)
 	@mkdir -p $(BUILD)/luaposix-obj
-	@for src in $(LUAPOSIX_DIR)/ext/posix/*.c; do \
-	  [ -f "$src" ] || continue; \
-	  base=$(basename $src .c); \
-	  $(CC) $(CFLAGS) $(SHARED_FLAGS) \
-	    -I$(LUA_SRC) \
-	    -I$(LUAPOSIX_DIR)/ext/include \
-	    -I$(LUAPOSIX_DIR)/ext/posix \
-	    -DPACKAGE='"luaposix"' \
-	    -DVERSION='"$(LUAPOSIX_VER)"' \
-	    -c -o $(BUILD)/luaposix-obj/$base.o $src; \
-	done
+	cd $(LUAPOSIX_DIR)/ext/posix && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
+	  -I$(CURDIR)/$(LUA_SRC) \
+	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/include \
+	  -I$(CURDIR)/$(LUAPOSIX_DIR)/ext/posix \
+	  -DPACKAGE='"luaposix"' \
+	  -DVERSION='"$(LUAPOSIX_VER)"' \
+	  -c *.c
+	mv $(LUAPOSIX_DIR)/ext/posix/*.o $(BUILD)/luaposix-obj/
 	@touch $@
 
 $(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
 	$(AR) rcs $@ $(BUILD)/luaposix-obj/*.o
 	$(RANLIB) $@
 
+# Build .so modules — uses a helper script to avoid Make $$ issues
 $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@mkdir -p $(BUILD)/luaposix-so
-	@for obj in $(BUILD)/luaposix-obj/*.o; do \
-	  sym=$$(nm -g "$$obj" 2>/dev/null \
-	    | grep ' T.*$(NM_LUAOPEN_RE)' \
-	    | head -1 \
-	    | awk '{print $$NF}' \
-	    | sed 's/^_//'); \
-	  if [ -z "$$sym" ]; then continue; fi; \
-	  relpath=$$(echo "$$sym" \
-	    | sed 's/^luaopen_//' \
-	    | sed 's/_/\//g'); \
-	  dir=$$(dirname "$$relpath"); \
-	  mkdir -p "$(BUILD)/luaposix-so/$$dir"; \
-	  $(CC) $(SHARED_LINK) -o "$(BUILD)/luaposix-so/$${relpath}.$(SHARED_EXT)" \
-	    "$$obj" -L$(BUILD) -llua $(LDFLAGS_LUA); \
-	done
-	touch $@
+	@printf '%s\n' '#!/bin/sh' \
+	  'set -e' \
+	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
+	  '  sym=$$(nm -g "$$obj" 2>/dev/null | grep " T.*luaopen_" | head -1 | awk '"'"'{print $$NF}'"'"' | sed "s/^_//")' \
+	  '  if [ -z "$$sym" ]; then continue; fi' \
+	  '  relpath=$$(echo "$$sym" | sed "s/^luaopen_//" | sed "s/_/\//g")' \
+	  '  dir=$$(dirname "$$relpath")' \
+	  '  mkdir -p "'"$(BUILD)"'/luaposix-so/$$dir"' \
+	  '  $(CC) $(SHARED_LINK) -o "'"$(BUILD)"'/luaposix-so/$${relpath}.$(SHARED_EXT)" "$$obj" -L'"$(BUILD)"' -llua $(LDFLAGS_LUA)' \
+	  'done' > $(BUILD)/_build_posix_so.sh
+	@sh $(BUILD)/_build_posix_so.sh
+	@touch $@
 
 .PHONY: luaposix
 luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built $(LUA_SO)
@@ -464,20 +444,18 @@ luv: $(BUILD)/libluv.a $(BUILD)/luv.$(SHARED_EXT) $(BUILD)/libluv.$(SHARED_EXT)
 # 4. LUAFILESYSTEM (lfs)
 # =============================================================================
 
-LFS_OBJ := $(BUILD)/lfs-obj/lfs.o
-
-$(LFS_OBJ): $(LFS_DIR) $(LUA_A)
+$(BUILD)/lfs-obj/lfs.o: $(LFS_DIR) $(LUA_A)
 	@mkdir -p $(BUILD)/lfs-obj
 	$(CC) $(CFLAGS) $(SHARED_FLAGS) \
 	  -I$(LUA_SRC) -I$(LFS_DIR)/src \
 	  -c -o $@ $(LFS_DIR)/src/lfs.c
 
-$(BUILD)/liblfs.a: $(LFS_OBJ)
-	$(AR) rcs $@ $^
+$(BUILD)/liblfs.a: $(BUILD)/lfs-obj/lfs.o
+	$(AR) rcs $@ $<
 	$(RANLIB) $@
 
-$(BUILD)/lfs.$(SHARED_EXT): $(LFS_OBJ) $(LUA_SO)
-	$(CC) $(SHARED_LINK) -o $@ $(LFS_OBJ) -L$(BUILD) -llua $(LDFLAGS_LUA)
+$(BUILD)/lfs.$(SHARED_EXT): $(BUILD)/lfs-obj/lfs.o $(LUA_SO)
+	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: lfs
 lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(SHARED_EXT)
@@ -486,13 +464,12 @@ lfs: $(BUILD)/liblfs.a $(BUILD)/lfs.$(SHARED_EXT)
 # 5. LPEG
 # =============================================================================
 
+# Compile via cd + glob (same pattern as lua)
 $(BUILD)/lpeg-obj/.built: $(LUA_A) $(LPEG_DIR)
 	@mkdir -p $(BUILD)/lpeg-obj
-	@for src in $(LPEG_DIR)/lp*.c; do \
-	  [ -f "$src" ] || continue; \
-	  base=$(basename $src .c); \
-	  $(CC) $(CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) -I$(LPEG_DIR) -c -o $(BUILD)/lpeg-obj/$base.o $src; \
-	done
+	cd $(LPEG_DIR) && $(CC) $(CFLAGS) $(SHARED_FLAGS) \
+	  -I$(CURDIR)/$(LUA_SRC) -c lp*.c
+	mv $(LPEG_DIR)/lp*.o $(BUILD)/lpeg-obj/
 	@touch $@
 
 $(BUILD)/liblpeg.a: $(BUILD)/lpeg-obj/.built
@@ -509,19 +486,17 @@ lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(SHARED_EXT)
 # 6. LUA-TERM
 # =============================================================================
 
-LUATERM_OBJ := $(BUILD)/luaterm-obj/core.o
-
-$(LUATERM_OBJ): $(LUATERM_DIR) $(LUA_A)
+$(BUILD)/luaterm-obj/core.o: $(LUATERM_DIR) $(LUA_A)
 	@mkdir -p $(BUILD)/luaterm-obj
 	$(CC) $(CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
 	  -c -o $@ $(LUATERM_DIR)/core.c
 
-$(BUILD)/libluaterm.a: $(LUATERM_OBJ)
-	$(AR) rcs $@ $^
+$(BUILD)/libluaterm.a: $(BUILD)/luaterm-obj/core.o
+	$(AR) rcs $@ $<
 	$(RANLIB) $@
 
-$(BUILD)/term_core.$(SHARED_EXT): $(LUATERM_OBJ) $(LUA_SO)
-	$(CC) $(SHARED_LINK) -o $@ $(LUATERM_OBJ) -L$(BUILD) -llua $(LDFLAGS_LUA)
+$(BUILD)/term_core.$(SHARED_EXT): $(BUILD)/luaterm-obj/core.o $(LUA_SO)
+	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: luaterm
 luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(SHARED_EXT)
@@ -539,100 +514,72 @@ dkjson: $(DKJSON_FILE)
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 
-# ---- Generate preload_modules.c --------------------------------------------
-
+# Generate preload_modules.c via helper script
 $(BUILD)/preload_modules.c: $(BUILD)/libluaposix.a $(BUILD)/libluv.a \
                              $(BUILD)/liblfs.a $(BUILD)/liblpeg.a \
                              $(BUILD)/libluaterm.a
 	@mkdir -p $(BUILD)
-	@exec > $@; \
-	echo '/* Auto-generated — do not edit */'; \
-	echo '#include "lua.h"'; \
-	echo '#include "lauxlib.h"'; \
-	echo '#include "lualib.h"'; \
-	echo ''; \
-	echo '/* Forward declarations */'; \
-	for obj in $(BUILD)/luaposix-obj/*.o; do \
-	  nm -g "${obj}" 2>/dev/null \
-	    | grep ' T.*$(NM_LUAOPEN_RE)' \
-	    | awk '{print $NF}' \
-	    | sed 's/^_//' \
-	    | while read sym; do \
-	      echo "int ${sym}(lua_State *L);"; \
-	    done; \
-	done; \
-	echo 'int luaopen_luv(lua_State *L);'; \
-	echo 'int luaopen_lfs(lua_State *L);'; \
-	echo 'int luaopen_lpeg(lua_State *L);'; \
-	echo 'int luaopen_term_core(lua_State *L);'; \
-	echo ''; \
-	echo 'static const struct { const char *name; lua_CFunction func; } bundled_modules[] = {'; \
-	for obj in $(BUILD)/luaposix-obj/*.o; do \
-	  nm -g "${obj}" 2>/dev/null \
-	    | grep ' T.*$(NM_LUAOPEN_RE)' \
-	    | awk '{print $NF}' \
-	    | sed 's/^_//' \
-	    | while read sym; do \
-	      modname=$(echo "${sym}" | sed 's/^luaopen_//' | sed 's/_/./g'); \
-	      echo "  { \"${modname}\", ${sym} },"; \
-	    done; \
-	done; \
-	echo '  { "luv", luaopen_luv },'; \
-	echo '  { "lfs", luaopen_lfs },'; \
-	echo '  { "lpeg", luaopen_lpeg },'; \
-	echo '  { "term.core", luaopen_term_core },'; \
-	echo '  { NULL, NULL }'; \
-	echo '};'; \
-	echo ''; \
-	echo 'void preload_bundled_modules(lua_State *L) {'; \
-	echo '  luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);'; \
-	echo '  for (int i = 0; bundled_modules[i].name; i++) {'; \
-	echo '    lua_pushcfunction(L, bundled_modules[i].func);'; \
-	echo '    lua_setfield(L, -2, bundled_modules[i].name);'; \
-	echo '  }'; \
-	echo '  lua_pop(L, 1);'; \
-	echo '}'
+	@printf '%s\n' '#!/bin/sh' \
+	  'echo "/* Auto-generated */"' \
+	  'echo "#include \"lua.h\""' \
+	  'echo "#include \"lauxlib.h\""' \
+	  'echo "#include \"lualib.h\""' \
+	  'echo ""' \
+	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
+	  '  nm -g "$$obj" 2>/dev/null | grep " T.*luaopen_" | awk '"'"'{print $$NF}'"'"' | sed "s/^_//" | while read s; do' \
+	  '    echo "int $${s}(lua_State *L);"' \
+	  '  done' \
+	  'done' \
+	  'echo "int luaopen_luv(lua_State *L);"' \
+	  'echo "int luaopen_lfs(lua_State *L);"' \
+	  'echo "int luaopen_lpeg(lua_State *L);"' \
+	  'echo "int luaopen_term_core(lua_State *L);"' \
+	  'echo ""' \
+	  'echo "static const struct { const char *name; lua_CFunction func; } bundled[] = {"' \
+	  'for obj in '"$(BUILD)"'/luaposix-obj/*.o; do' \
+	  '  nm -g "$$obj" 2>/dev/null | grep " T.*luaopen_" | awk '"'"'{print $$NF}'"'"' | sed "s/^_//" | while read s; do' \
+	  '    m=$$(echo "$$s" | sed "s/^luaopen_//" | sed "s/_/./g")' \
+	  '    echo "  { \"$$m\", $$s },"' \
+	  '  done' \
+	  'done' \
+	  'echo "  { \"luv\", luaopen_luv },"' \
+	  'echo "  { \"lfs\", luaopen_lfs },"' \
+	  'echo "  { \"lpeg\", luaopen_lpeg },"' \
+	  'echo "  { \"term.core\", luaopen_term_core },"' \
+	  'echo "  { NULL, NULL }"' \
+	  'echo "};"' \
+	  'echo ""' \
+	  'echo "void preload_bundled_modules(lua_State *L) {"' \
+	  'echo "  luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);"' \
+	  'echo "  for (int i = 0; bundled[i].name; i++) {"' \
+	  'echo "    lua_pushcfunction(L, bundled[i].func);"' \
+	  'echo "    lua_setfield(L, -2, bundled[i].name);"' \
+	  'echo "  }"' \
+	  'echo "  lua_pop(L, 1);"' \
+	  'echo "}"' > $(BUILD)/_gen_preload.sh
+	@sh $(BUILD)/_gen_preload.sh > $@
 
-# ---- Patched linit.c (derived from the REAL linit.c) -----------------------
-#
-# We copy the stock linit.c and use awk to:
-#   1. Add a forward declaration after the last #include
-#   2. Insert preload_bundled_modules(L); before the closing } of luaL_openlibs
-#
-# This avoids sed 'a\' which conflicts with Make's backslash handling,
-# and avoids requiring python3.
-
+# Patch linit.c using awk (no shell variables needed)
 $(BUILD)/static-lua/linit_bundled.c: $(BUILD)/.lua-patched $(BUILD)/preload_modules.c
 	@mkdir -p $(BUILD)/static-lua
-	@awk ' \
-	  /^#include/ { last_inc = NR } \
-	  { lines[NR] = $$0 } \
-	  END { \
-	    for (i = 1; i <= NR; i++) { \
-	      print lines[i]; \
-	      if (i == last_inc) \
-	        print "extern void preload_bundled_modules(lua_State *L);"; \
-	    } \
-	  }' $(LUA_SRC)/linit.c > $@.tmp1
-	@awk ' \
-	  /luaL_openlibs/ { in_fn = 1 } \
-	  in_fn && /^}/ { print "  preload_bundled_modules(L);"; in_fn = 0 } \
-	  { print }' $@.tmp1 > $@
-	@rm -f $@.tmp1
+	@awk '/^#include/{last=NR} {lines[NR]=$$0} END{for(i=1;i<=NR;i++){print lines[i]; if(i==last) print "extern void preload_bundled_modules(lua_State *L);"}}' \
+	  $(LUA_SRC)/linit.c > $@.tmp
+	@awk '/luaL_openlibs/{fn=1} fn && /^}/{print "  preload_bundled_modules(L);"; fn=0} {print}' \
+	  $@.tmp > $@
+	@rm -f $@.tmp
 
-# ---- Compile static binary using the real lua.c ----------------------------
-
+# Compile static binary: cd+glob pattern, no shell variables
 $(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.c \
                     $(BUILD)/libluaposix.a $(BUILD)/libluv.a $(LIBUV_A) \
                     $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a \
                     $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua/obj
-	@for src in $(LUA_SRC)/*.c; do \
-	  case $src in */lua.c|*/luac.c|*/linit.c) continue;; esac; \
-	  base=$(basename $src .c); \
-	  $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
-	    -c -o $(BUILD)/static-lua/obj/$base.o $src; \
-	done
+	@# Compile all .c, then remove the three we don't want
+	cd $(LUA_SRC) && $(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -c *.c
+	mv $(LUA_SRC)/*.o $(BUILD)/static-lua/obj/
+	rm -f $(BUILD)/static-lua/obj/lua.o $(BUILD)/static-lua/obj/luac.o \
+	      $(BUILD)/static-lua/obj/linit.o
+	@# Compile patched linit + preload
 	$(CC) $(LUA_CFLAGS) $(SHARED_FLAGS) -I$(LUA_SRC) \
 	  -c -o $(BUILD)/static-lua/obj/linit_bundled.o \
 	  $(BUILD)/static-lua/linit_bundled.c
@@ -643,12 +590,10 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/linit_bundled.c $(BUILD)/preload_modules.
 	  -I$(CURDIR)/$(LPEG_DIR) \
 	  -c -o $(BUILD)/static-lua/obj/preload_modules.o \
 	  $(BUILD)/preload_modules.c
-	$(AR) rcs $(BUILD)/static-lua/liblua-bundled.a \
-	  $(BUILD)/static-lua/obj/*.o
+	@# Archive and link
+	$(AR) rcs $(BUILD)/static-lua/liblua-bundled.a $(BUILD)/static-lua/obj/*.o
 	$(RANLIB) $(BUILD)/static-lua/liblua-bundled.a
-	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) \
-	  -I$(LUA_SRC) \
-	  -o $@ \
+	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) -I$(LUA_SRC) -o $@ \
 	  $(LUA_SRC)/lua.c \
 	  $(BUILD)/static-lua/liblua-bundled.a \
 	  $(BUILD)/libluaposix.a \
@@ -796,7 +741,8 @@ export TEST_SCRIPT
 test: $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(SHARED_EXT) \
       $(BUILD)/lfs.$(SHARED_EXT) $(BUILD)/lpeg.$(SHARED_EXT) \
       $(BUILD)/term_core.$(SHARED_EXT) $(DKJSON_FILE)
-	@echo "${TEST_SCRIPT}" > $(BUILD)/test_bundled.lua
+	@mkdir -p $(BUILD)
+	@echo "$$TEST_SCRIPT" > $(BUILD)/test_bundled.lua
 	$(TEST_LUA) $(BUILD)/test_bundled.lua
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  echo ""; echo "=== Testing static binary ==="; echo ""; \
@@ -818,11 +764,8 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	install -m 644 $(LUA_A) $(PREFIX)/lib/liblua.a
 	install -m 755 $(LUA_SO) $(PREFIX)/lib/liblua.$(SHARED_EXT)
 	cd $(PREFIX)/lib && ln -sf liblua.$(SHARED_EXT) liblua$(LUA_SHORT).$(SHARED_EXT)
-	@for h in $(LUA_SRC)/*.h $(LUA_SRC)/*.hpp; do \
-	  [ -f "${h}" ] || continue; \
-	  install -m 644 "${h}" $(PREFIX)/include/; \
-	  install -m 644 "${h}" $(PREFIX)/include/lua$(LUA_SHORT)/; \
-	done
+	cd $(LUA_SRC) && find . -name '*.h' -exec install -m 644 {} $(PREFIX)/include/ \;
+	cd $(LUA_SRC) && find . -name '*.h' -exec install -m 644 {} $(PREFIX)/include/lua$(LUA_SHORT)/ \;
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  install -m 755 $(STATIC_LUA_BIN) $(PREFIX)/bin/lua-static; \
 	fi
@@ -830,19 +773,13 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	install -d $(PREFIX)/lib $(PREFIX)/share/lua/$(LUA_SHORT)/posix
 	install -m 644 $(BUILD)/libluaposix.a $(PREFIX)/lib/
-	@cd $(BUILD)/luaposix-so && \
-	  find . -name '*.$(SHARED_EXT)' | while read f; do \
-	    dir=$(PREFIX)/lib/lua/$(LUA_SHORT)/$(dirname "${f}"); \
-	    install -d "${dir}"; \
-	    install -m 755 "${f}" "${dir}/$(basename ${f})"; \
-	  done
+	cd $(BUILD)/luaposix-so && \
+	  find . -name '*.$(SHARED_EXT)' -exec sh -c \
+	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$$(dirname "{}")"; install -d "$$d"; install -m 755 "{}" "$$d/"' \;
 	@if [ -d $(LUAPOSIX_DIR)/lib/posix ]; then \
 	  cd $(LUAPOSIX_DIR)/lib && \
-	  find posix -name '*.lua' | while read f; do \
-	    dir=$(PREFIX)/share/lua/$(LUA_SHORT)/$(dirname "${f}"); \
-	    install -d "${dir}"; \
-	    install -m 644 "${f}" "${dir}/$(basename ${f})"; \
-	  done; \
+	  find posix -name '*.lua' -exec sh -c \
+	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$$(dirname "{}")"; install -d "$$d"; install -m 644 "{}" "$$d/"' \; ; \
 	fi
 
 install-luv: $(BUILD)/libluv.a $(BUILD)/luv.$(SHARED_EXT) $(LIBUV_A)
@@ -875,10 +812,8 @@ install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(SHARED_EXT)
 	install -m 644 $(BUILD)/libluaterm.a $(PREFIX)/lib/
 	install -m 755 $(BUILD)/term_core.$(SHARED_EXT) \
 	  $(PREFIX)/lib/lua/$(LUA_SHORT)/term/core.$(SHARED_EXT)
-	@for f in $(LUATERM_DIR)/term/*.lua; do \
-	  [ -f "${f}" ] || continue; \
-	  install -m 644 "${f}" $(PREFIX)/share/lua/$(LUA_SHORT)/term/; \
-	done
+	cd $(LUATERM_DIR)/term && find . -name '*.lua' -exec install -m 644 {} \
+	  $(PREFIX)/share/lua/$(LUA_SHORT)/term/ \;
 
 install-dkjson: $(DKJSON_FILE)
 	install -d $(PREFIX)/share/lua/$(LUA_SHORT)
@@ -898,4 +833,4 @@ install-pkgconfig:
 	  echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
 	  echo 'Libs.private: -lpthread'; \
 	  echo 'Cflags: -I$${includedir}'; \
-	} > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pc
+	} > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pcsh shell on macOS).
