@@ -141,11 +141,13 @@ jobs:
       - name: Build static interpreter
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" static-lua
 
-      - name: Run smoke tests
-        run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
-
       - name: Install
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" install
+
+      - name: Run smoke tests
+        env:
+          LUA_PATH: ${{ github.workspace }}/lua-regolith/share/lua/5.4/?.lua;;
+        run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
 
       # ── 4. Verify ─────────────────────────────────────────
       - name: Verify lua-static runs

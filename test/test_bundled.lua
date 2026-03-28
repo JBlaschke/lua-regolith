@@ -108,7 +108,11 @@ end)
 
 test("isatty(0)", function()
    local r = unistd.isatty(0)
-   assert(type(r) == "boolean" or type(r) == "number")
+   if os.getenv("CI") then
+      assert(not r, "expected no tty in CI")
+   else
+       assert(type(r) == "boolean" or type(r) == "number")
+   end
 end)
 
 test("access('/') readable", function()
@@ -1554,7 +1558,11 @@ end)
 
 test("isatty(io.stdout) returns boolean/number", function()
    local r = term_core.isatty(io.stdout)
-   assert(type(r) == "boolean" or type(r) == "number")
+   if os.getenv("CI") then
+      assert(not r, "expected no tty in CI")
+   else
+       assert(type(r) == "boolean" or type(r) == "number")
+   end
 end)
 
 -- ============================================================================
