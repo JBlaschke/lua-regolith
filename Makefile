@@ -53,16 +53,23 @@ LUA_VER       := 5.4.7
 LUAPOSIX_VER  := 36.2.1
 LUV_VER       := 1.48.0-2
 LIBUV_VER     := 1.48.0
-LFS_VER       := 1.8.0
-# luafilesystem uses underscores in tags: v1.8.0 → v1_8_0
+LFS_VER       := 1.9.0
+# luafilesystem uses underscores in tags: v1.9.0 → v1_9_0
 LFS_TAG       := v$(subst .,_,$(LFS_VER))
 LPEG_VER      := 1.1.0
 LUATERM_VER   := 0.8
 DKJSON_VER    := 2.8
 
-# SHA-256 checksums (set to empty to skip)
-LUA_SHA256      :=
-LUAPOSIX_SHA256 :=
+# SHA-256 checksums (set to empty to skip verification for that file).
+#
+# To populate missing entries after "make download", run:
+#   sha256sum *.tar.gz *.lua   # Linux
+#   shasum -a 256 *.tar.gz *.lua  # macOS
+#
+# Confirmed from official upstream announcements / trusted package repos:
+LUA_SHA256      := 9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30
+LUAPOSIX_SHA256 := 44e5087cd3c47058f9934b90c0017e4cf870b71619f99707dd433074622debb1
+# GitHub auto-generated archive checksums — fill in after running "make download":
 LUV_SHA256      :=
 LIBUV_SHA256    :=
 LFS_SHA256      :=
@@ -163,19 +170,27 @@ clean:
 distclean: clean
 	rm -rf $(LUA_DIR) $(LUAPOSIX_DIR) $(LUV_DIR) $(LIBUV_DIR) \
 	       $(LFS_DIR) $(LPEG_DIR) $(LUATERM_DIR)
-	rm -f lua-$(LUA_VER).tar.gz luaposix-$(LUAPOSIX_VER).tar.gz \
-	      luv-$(LUV_VER).tar.gz libuv-$(LIBUV_VER).tar.gz \
-	      lfs-$(LFS_VER).tar.gz lpeg-$(LPEG_VER).tar.gz \
-	      luaterm-$(LUATERM_VER).tar.gz $(DKJSON_FILE)
+	rm -f lua-$(LUA_VER).tar.gz \
+	      luaposix-$(LUAPOSIX_VER).tar.gz \
+	      luv-$(LUV_VER).tar.gz \
+	      libuv-$(LIBUV_VER).tar.gz \
+	      lfs-$(LFS_VER).tar.gz \
+	      lpeg-$(LPEG_VER).tar.gz \
+	      luaterm-$(LUATERM_VER).tar.gz \
+	      $(DKJSON_FILE)
 
 # =============================================================================
 # DOWNLOAD + VERIFY
 # =============================================================================
 
-TARBALLS := lua-$(LUA_VER).tar.gz luaposix-$(LUAPOSIX_VER).tar.gz \
-            luv-$(LUV_VER).tar.gz libuv-$(LIBUV_VER).tar.gz \
-            lfs-$(LFS_VER).tar.gz lpeg-$(LPEG_VER).tar.gz \
-            luaterm-$(LUATERM_VER).tar.gz $(DKJSON_FILE)
+TARBALLS := lua-$(LUA_VER).tar.gz \
+            luaposix-$(LUAPOSIX_VER).tar.gz \
+            luv-$(LUV_VER).tar.gz \
+            libuv-$(LIBUV_VER).tar.gz \
+            lfs-$(LFS_VER).tar.gz \
+            lpeg-$(LPEG_VER).tar.gz \
+            luaterm-$(LUATERM_VER).tar.gz \
+            $(DKJSON_FILE)
 
 download: $(TARBALLS)
 
@@ -273,7 +288,8 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 # Make recipes.  Instead use one of:
 #   a) "cd dir && cc -c *.c" then "mv *.o dest/ && rm unwanted.o"
 #   b) Write a helper .sh script with printf, then sh it
-#   c) Use find -exec sh -c '...' for install loops
+#   c) Use find -exec sh -c '...' _ {} \; for install loops
+#      (passing {} as $1 avoids shell expansion issues with "{}").
 
 LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
@@ -389,34 +405,24 @@ luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built $(LUA_SO)
 # =============================================================================
 # 3. LIBUV + LUV
 # =============================================================================
+#
+# libuv is built once, as part of luv's cmake build, by symlinking the
+# extracted libuv source tree into luv's deps/ directory.  This avoids
+# a redundant cmake invocation.  After luv's build completes, libuv.a
+# is extracted from luv's build tree for use by the static interpreter
+# and for install.
 
-LIBUV_BUILD := $(BUILD)/libuv-build
-# libuv cmake produces libuv.a (not libuv_a.a) on some platforms
-LIBUV_A     := $(LIBUV_BUILD)/libuv.a
+LUV_BUILD   := $(BUILD)/luv-build
+LIBUV_A     := $(BUILD)/libluv_libuv.a
 
-$(LIBUV_A): $(LIBUV_DIR)
-	@mkdir -p $(LIBUV_BUILD)
-	cd $(LIBUV_BUILD) && $(CMAKE) \
-	  -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)" \
-	  -DCMAKE_BUILD_TYPE=Release \
-	  -DBUILD_TESTING=OFF \
-	  -DLIBUV_BUILD_SHARED=OFF \
-	  $(CURDIR)/$(LIBUV_DIR)
-	$(MAKE) -C $(LIBUV_BUILD) -j$(NPROC)
-	@# Normalize: cmake may produce libuv.a or libuv_a.a depending on version
-	@if [ ! -f $@ ] && [ -f $(LIBUV_BUILD)/libuv_a.a ]; then \
-	  cp $(LIBUV_BUILD)/libuv_a.a $@; \
-	fi
-	@test -f $@ || { echo "ERROR: libuv.a not found"; ls -la $(LIBUV_BUILD)/lib*.a 2>/dev/null; exit 1; }
+# Symlink libuv source into luv's deps/ so luv's cmake picks it up
+# instead of trying to fetch its own copy.
+$(LUV_DIR)/.libuv-linked: $(LUV_DIR) $(LIBUV_DIR)
+	rm -rf $(LUV_DIR)/deps/libuv
+	ln -sf $(CURDIR)/$(LIBUV_DIR) $(LUV_DIR)/deps/libuv
+	touch $@
 
-LUV_BUILD := $(BUILD)/luv-build
-
-# NOTE: This version of luv ignores external libuv settings and always
-# builds its bundled copy from deps/.  We let it do that and just find
-# the output.  The separately-built libuv is still used for install and
-# for linking the static interpreter.
-
-$(BUILD)/libluv.a: $(LUA_A) $(LIBUV_A) $(LUV_DIR)
+$(BUILD)/libluv.a: $(LUA_A) $(LUV_DIR)/.libuv-linked
 	@mkdir -p $(LUV_BUILD)
 	cd $(LUV_BUILD) && $(CMAKE) \
 	  -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)" \
@@ -430,11 +436,18 @@ $(BUILD)/libluv.a: $(LUA_A) $(LIBUV_A) $(LUV_DIR)
 	  -DBUILD_STATIC_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD) -j$(NPROC)
-	@# Copy the static lib — use find -exec to avoid shell variable issues
-	find $(LUV_BUILD) -maxdepth 1 -name 'libluv*.a' -exec cp {} $@ \;
+	@# Copy libluv.a — use find -exec to avoid shell variable issues
+	find $(LUV_BUILD) -maxdepth 2 -name 'libluv*.a' -exec cp {} $@ \;
 	@test -f $@ || { echo "ERROR: libluv.a not found"; find $(LUV_BUILD) -name '*.a'; exit 1; }
+	@# Extract libuv.a from luv's own build for the static interpreter + install
+	find $(LUV_BUILD) -name 'libuv.a' -o -name 'libuv_a.a' | head -1 \
+	  > $(BUILD)/_libuv_a_path
+	@sh -c 'p=$$(cat $(BUILD)/_libuv_a_path); \
+	  if [ -n "$$p" ]; then cp "$$p" $(LIBUV_A); \
+	  else echo "ERROR: libuv.a not found in luv build tree"; \
+	       find $(LUV_BUILD) -name "*.a"; exit 1; fi'
 
-$(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO) $(LIBUV_A)
+$(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO)
 	@mkdir -p $(LUV_BUILD)/shared
 	cd $(LUV_BUILD)/shared && $(CMAKE) \
 	  -DCMAKE_C_FLAGS="$(CFLAGS) $(SHARED_FLAGS)" \
@@ -447,9 +460,10 @@ $(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO) $(LIBUV_A)
 	  -DBUILD_SHARED_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD)/shared -j$(NPROC)
-	@# Copy the shared lib — use find -exec to avoid shell variable issues
+	@# Copy luv.so — use find -exec to avoid shell variable issues
 	find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' -exec cp {} $@ \;
-	@test -f $@ || { echo "ERROR: luv.$(SHARED_EXT) not found"; find $(LUV_BUILD)/shared -name '*.$(SHARED_EXT)'; exit 1; }
+	@test -f $@ || { echo "ERROR: luv.$(SHARED_EXT) not found"; \
+	  find $(LUV_BUILD)/shared -name '*.$(SHARED_EXT)'; exit 1; }
 
 $(BUILD)/libluv.$(SHARED_EXT): $(BUILD)/luv.$(SHARED_EXT)
 	cp $< $@
@@ -787,16 +801,20 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	  install -m 755 $(STATIC_LUA_BIN) $(PREFIX)/bin/lua-static; \
 	fi
 
+# FIX: use 'sh -c ... _ {}' pattern so {} is passed as $1, which is
+# portable across all find implementations (avoids "{}" shell expansion issues).
 install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
 	install -d $(PREFIX)/lib $(PREFIX)/share/lua/$(LUA_SHORT)/posix
 	install -m 644 $(BUILD)/libluaposix.a $(PREFIX)/lib/
 	cd $(BUILD)/luaposix-so && \
 	  find . -name '*.$(SHARED_EXT)' -exec sh -c \
-	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$$(dirname "{}")"; install -d "$$d"; install -m 755 "{}" "$$d/"' \;
+	    'd="$(PREFIX)/lib/lua/$(LUA_SHORT)/$$(dirname "$$1")"; install -d "$$d"; install -m 755 "$$1" "$$d/"' \
+	    _ {} \;
 	@if [ -d $(LUAPOSIX_DIR)/lib/posix ]; then \
 	  cd $(LUAPOSIX_DIR)/lib && \
 	  find posix -name '*.lua' -exec sh -c \
-	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$$(dirname "{}")"; install -d "$$d"; install -m 644 "{}" "$$d/"' \; ; \
+	    'd="$(PREFIX)/share/lua/$(LUA_SHORT)/$$(dirname "$$1")"; install -d "$$d"; install -m 644 "$$1" "$$d/"' \
+	    _ {} \; ; \
 	fi
 
 install-luv: $(BUILD)/libluv.a $(BUILD)/luv.$(SHARED_EXT) $(LIBUV_A)
