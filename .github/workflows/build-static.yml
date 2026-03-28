@@ -8,7 +8,7 @@
 #   linux-x86_64   — musl          (alpine 3.20, fully static)
 #   linux-arm64    — glibc-latest  (ubuntu-24.04-arm)
 #   linux-arm64    — glibc-legacy  (ubuntu:20.04 container on arm runner)
-#   linux-arm64    — musl          (alpine 3.20 container on arm runner)
+#   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
 #   macos-arm64    — Apple Silicon (macos-14)
 #   macos-x86_64   — Intel Mac    (macos-13)
 #
@@ -35,6 +35,7 @@ jobs:
           - name:      linux-x86_64-glibc-latest
             runner:    ubuntu-24.04
             container: ""
+            docker_img: ""
             deps: >-
               sudo apt-get update &&
               sudo apt-get install -y build-essential cmake wget
@@ -44,6 +45,7 @@ jobs:
           - name:      linux-x86_64-glibc-legacy
             runner:    ubuntu-20.04
             container: ""
+            docker_img: ""
             deps: >-
               sudo apt-get update &&
               sudo apt-get install -y build-essential cmake wget
@@ -53,6 +55,7 @@ jobs:
           - name:      linux-x86_64-musl
             runner:    ubuntu-24.04
             container: alpine:3.20
+            docker_img: ""
             deps: >-
               apk add --no-cache build-base cmake wget readline-dev
               readline-static linux-headers python3 git
@@ -62,6 +65,7 @@ jobs:
           - name:      linux-arm64-glibc-latest
             runner:    ubuntu-24.04-arm
             container: ""
+            docker_img: ""
             deps: >-
               sudo apt-get update &&
               sudo apt-get install -y build-essential cmake wget
@@ -73,6 +77,7 @@ jobs:
           - name:      linux-arm64-glibc-legacy
             runner:    ubuntu-24.04-arm
             container: ubuntu:20.04
+            docker_img: ""
             deps: >-
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive
@@ -80,18 +85,24 @@ jobs:
               libreadline-dev python3 git
             makefile:  Makefile
 
+          # JS actions (checkout, upload-artifact) can't run
+          # inside Alpine on ARM64 — Node musl-arm64 binaries
+          # aren't bundled.  Checkout on the host, then build
+          # inside Alpine via `docker run`.
           - name:      linux-arm64-musl
             runner:    ubuntu-24.04-arm
-            container: alpine:3.20
+            container: ""
+            docker_img: alpine:3.20
             deps: >-
               apk add --no-cache build-base cmake wget readline-dev
-              readline-static linux-headers python3 git
+              readline-static linux-headers python3
             makefile:  Makefile
 
           # ── macOS ─────────────────────────────────────────
           - name:      macos-arm64
             runner:    macos-14
             container: ""
+            docker_img: ""
             deps: >-
               brew install readline cmake python3
             makefile:  Makefile
@@ -99,6 +110,7 @@ jobs:
           - name:      macos-x86_64
             runner:    macos-13
             container: ""
+            docker_img: ""
             deps: >-
               brew install readline cmake python3
             makefile:  Makefile
@@ -112,6 +124,7 @@ jobs:
     steps:
       # ── 0. Dependencies ──────────────────────────────────
       - name: Install build dependencies
+        if: ${{ !matrix.docker_img }}
         run: ${{ matrix.deps }}
 
       # ── 1. Source ─────────────────────────────────────────
@@ -131,25 +144,56 @@ jobs:
             echo "LDFLAGS=-L${READLINE_PREFIX}/lib"
           } >> "$GITHUB_ENV"
 
-      # ── 3. Build ──────────────────────────────────────────
+      # ────────────────────────────────────────────────────
+      #  Standard path (native or GitHub-managed container)
+      # ────────────────────────────────────────────────────
       - name: Download sources
+        if: ${{ !matrix.docker_img }}
         run: make -f ${{ matrix.makefile }} download
 
       - name: Build all modules
+        if: ${{ !matrix.docker_img }}
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" all
 
       - name: Build static interpreter
+        if: ${{ !matrix.docker_img }}
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" static-lua
 
       - name: Install
+        if: ${{ !matrix.docker_img }}
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" install
 
       - name: Run smoke tests
+        if: ${{ !matrix.docker_img }}
         env:
           LUA_PATH: ${{ github.workspace }}/lua-regolith/share/lua/5.4/?.lua;;
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
 
-      # ── 4. Verify ─────────────────────────────────────────
+      # ────────────────────────────────────────────────────
+      #  Docker path (ARM64 + Alpine)
+      #  Checkout happens on the host; build runs inside the
+      #  container with the workspace bind-mounted.
+      # ────────────────────────────────────────────────────
+      - name: Build inside Docker container
+        if: ${{ matrix.docker_img }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}":"${{ github.workspace }}" \
+            -w "${{ github.workspace }}" \
+            -e PREFIX="${{ github.workspace }}/lua-regolith" \
+            -e LUA_PATH="${{ github.workspace }}/lua-regolith/share/lua/5.4/?.lua;;" \
+            "${{ matrix.docker_img }}" \
+            sh -c '
+              set -eux
+              ${{ matrix.deps }}
+              make -f ${{ matrix.makefile }} download
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" all
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" static-lua
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" install
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
+            '
+
+      # ── Verify ────────────────────────────────────────────
       - name: Verify lua-static runs
         run: |
           echo "--- binary info ---"
@@ -159,10 +203,10 @@ jobs:
           echo "--- quick self-test ---"
           "$PREFIX/bin/lua-static" -e 'print("hello from lua-static")'
 
-      # ── 5. Package ────────────────────────────────────────
+      # ── Package ───────────────────────────────────────────
       - name: Create tarball
         run: |
-          TAG="${GITHUB_REF_NAME}"                          # e.g. v1.0.0
+          TAG="${GITHUB_REF_NAME}"
           ARCHIVE="lua-regolith-${TAG}-${{ matrix.name }}.tar.gz"
           tar -czf "${GITHUB_WORKSPACE}/${ARCHIVE}" -C "$PREFIX" .
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
