@@ -33,7 +33,6 @@
 
 # Force POSIX shell for recipes (critical on systems where SHELL may be
 # inherited from the environment, e.g. fish shell on macOS).
-
 SHELL := /bin/sh
 .SUFFIXES:
 MAKEFLAGS += --no-builtin-rules
@@ -412,6 +411,11 @@ $(LIBUV_A): $(LIBUV_DIR)
 
 LUV_BUILD := $(BUILD)/luv-build
 
+# NOTE: This version of luv ignores external libuv settings and always
+# builds its bundled copy from deps/.  We let it do that and just find
+# the output.  The separately-built libuv is still used for install and
+# for linking the static interpreter.
+
 $(BUILD)/libluv.a: $(LUA_A) $(LIBUV_A) $(LUV_DIR)
 	@mkdir -p $(LUV_BUILD)
 	cd $(LUV_BUILD) && $(CMAKE) \
@@ -421,19 +425,14 @@ $(BUILD)/libluv.a: $(LUA_A) $(LIBUV_A) $(LUV_DIR)
 	  -DLUA_BUILD_TYPE=System \
 	  -DLUA_INCLUDE_DIR=$(CURDIR)/$(LUA_SRC) \
 	  -DLUA_LIBRARY=$(LUA_A) \
-	  -DLIBUV_BUILDTYPE=External \
-	  -DLIBUV_INCLUDE_DIR=$(CURDIR)/$(LIBUV_DIR)/include \
-	  -DLIBUV_LIBRARY=$(LIBUV_A) \
 	  -DBUILD_MODULE=OFF \
 	  -DBUILD_SHARED_LIBS=OFF \
 	  -DBUILD_STATIC_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD) -j$(NPROC)
-	@# luv names the static lib differently depending on version
-	@for f in $(LUV_BUILD)/libluv_a.a $(LUV_BUILD)/libluv.a; do \
-	  if [ -f "$f" ]; then cp "$f" $@; break; fi; \
-	done
-	@test -f $@ || { echo "ERROR: could not find libluv static library"; ls -la $(LUV_BUILD)/lib*.a 2>/dev/null; exit 1; }
+	@# Copy the static lib — use find -exec to avoid shell variable issues
+	find $(LUV_BUILD) -maxdepth 1 -name 'libluv*.a' -exec cp {} $@ \;
+	@test -f $@ || { echo "ERROR: libluv.a not found"; find $(LUV_BUILD) -name '*.a'; exit 1; }
 
 $(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO) $(LIBUV_A)
 	@mkdir -p $(LUV_BUILD)/shared
@@ -448,13 +447,9 @@ $(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO) $(LIBUV_A)
 	  -DBUILD_SHARED_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD)/shared -j$(NPROC)
-	@found=""; \
-	for f in $(find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' 2>/dev/null); do \
-	  found="$f"; break; \
-	done; \
-	if [ -n "$found" ]; then cp "$found" $@; \
-	else echo "ERROR: luv.$(SHARED_EXT) not found"; find $(LUV_BUILD)/shared -name '*.$(SHARED_EXT)' 2>/dev/null; exit 1; \
-	fi
+	@# Copy the shared lib — use find -exec to avoid shell variable issues
+	find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' -exec cp {} $@ \;
+	@test -f $@ || { echo "ERROR: luv.$(SHARED_EXT) not found"; find $(LUV_BUILD)/shared -name '*.$(SHARED_EXT)'; exit 1; }
 
 $(BUILD)/libluv.$(SHARED_EXT): $(BUILD)/luv.$(SHARED_EXT)
 	cp $< $@
