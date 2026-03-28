@@ -56,6 +56,7 @@ LIBUV_VER     := 1.48.0
 LFS_VER       := 1.9.0
 # luafilesystem uses underscores in tags: v1.9.0 → v1_9_0
 LFS_TAG       := v$(subst .,_,$(LFS_VER))
+LFS_VER_US    := $(subst .,_,$(LFS_VER))
 LPEG_VER      := 1.1.0
 LUATERM_VER   := 0.8
 DKJSON_VER    := 2.8
@@ -94,7 +95,7 @@ LUV_URL       := https://github.com/luvit/luv/releases/download/$(LUV_VER)/luv-$
 LIBUV_DIR     := libuv-$(LIBUV_VER)
 LIBUV_URL     := https://github.com/libuv/libuv/archive/refs/tags/v$(LIBUV_VER).tar.gz
 
-LFS_DIR       := luafilesystem-$(LFS_TAG)
+LFS_DIR       := luafilesystem-$(LFS_VER_US)
 LFS_URL       := https://github.com/lunarmodules/luafilesystem/archive/refs/tags/$(LFS_TAG).tar.gz
 
 LPEG_DIR      := lpeg-$(LPEG_VER)
