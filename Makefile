@@ -84,7 +84,7 @@ LUAPOSIX_URL  := https://github.com/luaposix/luaposix/archive/refs/tags/v$(LUAPO
 LUV_DIR       := luv-$(LUV_VER)
 LUV_URL       := https://github.com/luvit/luv/releases/download/$(LUV_VER)/luv-$(LUV_VER).tar.gz
 
-LIBUV_DIR     := libuv-v$(LIBUV_VER)
+LIBUV_DIR     := libuv-$(LIBUV_VER)
 LIBUV_URL     := https://github.com/libuv/libuv/archive/refs/tags/v$(LIBUV_VER).tar.gz
 
 LFS_DIR       := luafilesystem-$(LFS_TAG)
