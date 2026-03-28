@@ -638,8 +638,10 @@ luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
 # 7. DKJSON (pure Lua)
 # =============================================================================
 
-.PHONY: dkjson
+# dkjson target: copy to a discoverable name
 dkjson: $(DKJSON_FILE)
+	@mkdir -p $(BUILD)/lua-modules
+	cp $(DKJSON_FILE) $(BUILD)/lua-modules/dkjson.lua
 
 # =============================================================================
 # 8. FULLY STATIC LUA INTERPRETER  (bonus)
@@ -748,7 +750,8 @@ static-lua: $(STATIC_LUA_BIN)
 # 9. TEST
 # =============================================================================
 
-TEST_LUA = LUA_PATH="$(CURDIR)/$(LUAPOSIX_DIR)/lib/?.lua;$(CURDIR)/$(LUAPOSIX_DIR)/lib/?/init.lua;$(CURDIR)/$(LUATERM_DIR)/?.lua;$(CURDIR)/$(LUATERM_DIR)/?/init.lua;$(CURDIR)/$(LPEG_DIR)/?.lua;$(CURDIR)/$(DKJSON_FILE);;" \
+# TEST_LUA: only dkjson on LUA_PATH, let C searcher handle everything else
+TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
            LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);$(BUILD)/term_core.$(LUA_MOD_EXT);;" \
            $(LUA_BIN)
 
