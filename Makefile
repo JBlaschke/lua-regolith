@@ -33,6 +33,7 @@
 
 # Force POSIX shell for recipes (critical on systems where SHELL may be
 # inherited from the environment, e.g. fish shell on macOS).
+
 SHELL := /bin/sh
 .SUFFIXES:
 MAKEFLAGS += --no-builtin-rules
@@ -391,7 +392,8 @@ luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built $(LUA_SO)
 # =============================================================================
 
 LIBUV_BUILD := $(BUILD)/libuv-build
-LIBUV_A     := $(LIBUV_BUILD)/libuv_a.a
+# libuv cmake produces libuv.a (not libuv_a.a) on some platforms
+LIBUV_A     := $(LIBUV_BUILD)/libuv.a
 
 $(LIBUV_A): $(LIBUV_DIR)
 	@mkdir -p $(LIBUV_BUILD)
@@ -402,6 +404,11 @@ $(LIBUV_A): $(LIBUV_DIR)
 	  -DLIBUV_BUILD_SHARED=OFF \
 	  $(CURDIR)/$(LIBUV_DIR)
 	$(MAKE) -C $(LIBUV_BUILD) -j$(NPROC)
+	@# Normalize: cmake may produce libuv.a or libuv_a.a depending on version
+	@if [ ! -f $@ ] && [ -f $(LIBUV_BUILD)/libuv_a.a ]; then \
+	  cp $(LIBUV_BUILD)/libuv_a.a $@; \
+	fi
+	@test -f $@ || { echo "ERROR: libuv.a not found"; ls -la $(LIBUV_BUILD)/lib*.a 2>/dev/null; exit 1; }
 
 LUV_BUILD := $(BUILD)/luv-build
 
@@ -436,14 +443,17 @@ $(BUILD)/luv.$(SHARED_EXT): $(BUILD)/libluv.a $(LUA_SO) $(LIBUV_A)
 	  -DLUA_BUILD_TYPE=System \
 	  -DLUA_INCLUDE_DIR=$(CURDIR)/$(LUA_SRC) \
 	  -DLUA_LIBRARY=$(LUA_SO) \
-	  -DLIBUV_BUILDTYPE=External \
-	  -DLIBUV_INCLUDE_DIR=$(CURDIR)/$(LIBUV_DIR)/include \
-	  -DLIBUV_LIBRARY=$(LIBUV_A) \
 	  -DBUILD_MODULE=ON \
 	  -DBUILD_SHARED_LIBS=ON \
 	  $(CURDIR)/$(LUV_DIR)
 	$(MAKE) -C $(LUV_BUILD)/shared -j$(NPROC)
-	find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' -exec cp {} $@ \;
+	@found=""; \
+	for f in $(find $(LUV_BUILD)/shared -name 'luv.$(SHARED_EXT)' 2>/dev/null); do \
+	  found="$f"; break; \
+	done; \
+	if [ -n "$found" ]; then cp "$found" $@; \
+	else echo "ERROR: luv.$(SHARED_EXT) not found"; find $(LUV_BUILD)/shared -name '*.$(SHARED_EXT)' 2>/dev/null; exit 1; \
+	fi
 
 $(BUILD)/libluv.$(SHARED_EXT): $(BUILD)/luv.$(SHARED_EXT)
 	cp $< $@
