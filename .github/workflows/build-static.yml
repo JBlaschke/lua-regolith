@@ -226,7 +226,7 @@ jobs:
   build-freebsd:
     runs-on: ubuntu-latest
     env:
-      PREFIX: /home/runner/lua-regolith
+      PREFIX: ${{ github.workspace }}/lua-regolith
 
     steps:
       - name: Checkout
