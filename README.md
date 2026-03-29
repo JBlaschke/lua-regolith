@@ -135,6 +135,8 @@ $PREFIX/
 │   ├── libluv_libuv.a    │
 │   ├── liblfs.a          │
 │   ├── liblpeg.a         │
+│   ├── static-lua.a      │
+│   ├── static-lua.o      │
 │   ├── libluaterm.a     ─┘
 │   ├── lua/5.4/
 │   │   ├── posix.so     ─┐
@@ -170,6 +172,29 @@ luastatic main.lua \
 ```
 
 Include only the `.a` files for modules your script actually uses.
+
+> [!TIP]
+> Build the `static-lua` target, this will generate a `static-lua.a` fat
+> archive containing all the libraries above.
+
+If you build the fully static interpreter, then the `static-lua.a` archive is
+created for convenience. It contains all components used for the static
+interpreter (below). This simplifies the `luastatic` command:
+
+```
+luastatic main.lua \
+  /opt/lua-regolith/lib/static-lua.a \
+  -I/opt/lua-regolith/include \
+  -lpthread -lm -ldl
+```
+
+> [!NOTE]
+> In some cases the far archive won't get properly linked -- requiring extra
+> arguments (e.g. `luastatic main.lua ... -Wl,-force_load,/opt/lua-regolith/lib/static-lua.a ... `
+> on mac os; or `luastatic main.lua ... -Wl,--whole-archive /opt/lua-regolith/lib/static-lua.a -Wl,--no-whole-archive ...`
+> on linux -- to help with those cases, we provide a "raw" relocatable object:
+> `static-lua.o`
+
 
 ### Fully Static Interpreter
 

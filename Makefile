@@ -1386,6 +1386,7 @@ dkjson: $(DKJSON_FILE)
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 STATIC_LUA_A   := $(BUILD)/static-lua.a
+STATIC_LUA_O   := $(BUILD)/static-lua.o
 
 # ---------------------------------------------------------------------------
 # Collect pure-Lua module sources for embedding
@@ -1528,27 +1529,22 @@ $(BUILD)/static-lua/lr_preload_lua.o: src/lr_preload_lua.c src/lr_preload_lua.h 
 #
 # `file $@` at the end prints the binary's type (ELF, Mach-O, static vs
 # dynamic) as a quick sanity check.
+#
+# The only thing NOT in the archive is lua_static.c itself (the patched
+# lua.c with the preload calls), since it contains main().
+#
+# -include headers are still needed so lua_static.c can call the preload
+# functions without modifying its #include directives.
+#
+# $(STATIC_EXTRA) expands to -static on Linux, empty on macOS.
 
-$(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c \
-                    $(BUILD)/static-lua/lr_preload.o \
-                    $(BUILD)/static-lua/lr_preload_lua.o \
-                    $(LUA_A) \
-                    $(BUILD)/libluaposix.a $(BUILD)/libluv.a $(LIBUV_A) \
-                    $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a
+$(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c $(STATIC_LUA_A)
 	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) -I$(LUA_SRC) -Isrc \
 	  -include src/lr_preload.h \
 	  -include src/lr_preload_lua.h \
 	  -o $@ \
 	  $(BUILD)/static-lua/lua_static.c \
-	  $(BUILD)/static-lua/lr_preload.o \
-	  $(BUILD)/static-lua/lr_preload_lua.o \
-	  $(LUA_A) \
-	  $(BUILD)/libluaposix.a \
-	  $(BUILD)/libluv.a \
-	  $(LIBUV_A) \
-	  $(BUILD)/liblfs.a \
-	  $(BUILD)/liblpeg.a \
-	  $(BUILD)/libluaterm.a \
+	  $(STATIC_LUA_A) \
 	  -lpthread $(LDFLAGS_LUA)
 	@echo ""
 	@echo "Built static lua interpreter: $@"
@@ -1560,10 +1556,10 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c \
 # Build static-lua.a (fat archive for luastatic)
 # ---------------------------------------------------------------------------
 #
-# Merges all static libraries + the preload objects into a single archive.
-# This is the library counterpart of $(STATIC_LUA_BIN): it contains
-# everything EXCEPT lua.c's main(), so luastatic (or any other embedder)
-# can link a Lua script into a standalone binary with a single -l flag:
+# Merges all static libraries + the preload objects into a single archive. This
+# is the library counterpart of $(STATIC_LUA_BIN): it contains everything
+# EXCEPT lua.c's main(), so luastatic (or any other embedder) can link a Lua
+# script into a standalone binary with a single -l flag:
 #
 #   luastatic main.lua $(PREFIX)/lib/static-lua.a \
 #     -I$(PREFIX)/include -lpthread -lm -ldl
@@ -1571,45 +1567,149 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c \
 # The merge extracts each .a into its own subdirectory (to avoid filename
 # collisions — e.g. multiple archives may contain "init.o") then re-archives
 # everything.  Uses a generated script to avoid Make 3.81's $$ bug.
+#
+# NOTE: because this is an archive (not a relocatable object), consumers may
+# need --whole-archive / -force_load to pull in all symbols.  Prefer
+# static-lua.o for simplicity.  static-lua.a is provided for toolchains that
+# expect .a files.
 
 $(STATIC_LUA_A): $(BUILD)/static-lua/lr_preload.o \
                   $(BUILD)/static-lua/lr_preload_lua.o \
-                  $(LUA_A) \
-                  $(BUILD)/libluaposix.a $(BUILD)/libluv.a $(LIBUV_A) \
-                  $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a
+                  $(BUILD)/lua-obj/.built \
+                  $(BUILD)/luaposix-obj/.built \
+                  $(BUILD)/lpeg-obj/.built \
+                  $(BUILD)/lfs-obj/lfs.o \
+                  $(BUILD)/luaterm-obj/core.o \
+                  $(BUILD)/libluv.a $(LIBUV_A)
+	@mkdir -p $(BUILD)/static-lua/_merge_a
+	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_merge_static_a.sh
+	@printf 'MERGEDIR="%s/static-lua/_merge_a"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'rm -rf "\044MERGEDIR"/*\n' >> $(BUILD)/_merge_static_a.sh
+	@printf '\n# --- cmake-built archives: extract (no internal name collisions) ---\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'for lib in %s %s; do\n' '$(BUILD)/libluv.a' '$(LIBUV_A)' >> $(BUILD)/_merge_static_a.sh
+	@printf '  name=\044(basename "\044lib" .a)\n' >> $(BUILD)/_merge_static_a.sh
+	@printf '  mkdir -p "\044MERGEDIR/\044name"\n' >> $(BUILD)/_merge_static_a.sh
+	@printf '  cd "\044MERGEDIR/\044name" && %s x "\044lib"\n' '$(AR)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'done\n' >> $(BUILD)/_merge_static_a.sh
+	@printf '\n# --- our own .o files: copy directly (avoids ar x name collisions) ---\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'mkdir -p "\044MERGEDIR/lua-obj"\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp %s/lua-obj/*.o "\044MERGEDIR/lua-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp -R %s/luaposix-obj "\044MERGEDIR/luaposix-obj"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'rm -f "\044MERGEDIR/luaposix-obj/posix.o"\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'mkdir -p "\044MERGEDIR/lpeg-obj"\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp %s/lpeg-obj/*.o "\044MERGEDIR/lpeg-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'mkdir -p "\044MERGEDIR/lfs-obj"\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp %s/lfs-obj/lfs.o "\044MERGEDIR/lfs-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'mkdir -p "\044MERGEDIR/luaterm-obj"\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp %s/luaterm-obj/core.o "\044MERGEDIR/luaterm-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf '\n# --- preload objects ---\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp %s/static-lua/lr_preload.o "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf 'cp %s/static-lua/lr_preload_lua.o "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
+	@printf '\n# --- build archive ---\n' >> $(BUILD)/_merge_static_a.sh
+	@printf 'rm -f %s\n' '$@' >> $(BUILD)/_merge_static_a.sh
+	@printf 'find "\044MERGEDIR" -name "*.o" | sort | xargs %s rcs %s\n' '$(AR)' '$@' >> $(BUILD)/_merge_static_a.sh
+	@printf '%s %s\n' '$(RANLIB)' '$@' >> $(BUILD)/_merge_static_a.sh
+	@printf 'rm -rf "\044MERGEDIR"\n' >> $(BUILD)/_merge_static_a.sh
+	@sh $(BUILD)/_merge_static_a.sh
+	@echo ""
+	@echo "Built static archive: $@"
+	@echo "  Contains: liblua luaposix luv libuv lfs lpeg lua-term + preload"
+
+# ---------------------------------------------------------------------------
+# Build static-lua.o (single relocatable object for luastatic / embedding)
+# ---------------------------------------------------------------------------
+#
+# `ld -r` (also called "partial linking" or "incremental linking") combines
+# multiple .o files into a single .o without resolving external symbols. The
+# result is a plain object file — not an archive — so any linker will include
+# it unconditionally.  No --whole-archive or -force_load needed.
+#
+# This is the public interface for luastatic and other static-binary
+# producers:
+#
+#   luastatic main.lua $(PREFIX)/lib/static-lua.o \
+#     -I$(PREFIX)/include -lpthread -lm -ldl
+#
+# Contents: liblua + luaposix + luv + libuv + lfs + lpeg + lua-term
+#           + lr_preload.o (C module registration)
+#           + lr_preload_lua.o (embedded Lua modules)
+#
+# The merge extracts each .a into its own subdirectory (to avoid filename
+# collisions — e.g. multiple archives contain identically-named .o files), then
+# combines everything with ld -r.  Uses a generated script to stay safe from
+# Make 3.81's $$ escaping bug.
+#
+# `ld -r` (partial linking) combines multiple .o files into a single .o without
+# resolving external symbols.  The result is a plain object file — not an
+# archive — so any linker includes it unconditionally.  No
+# --whole-archive or -force_load needed.
+#
+# IMPORTANT: we use the build-tree .o files directly for our own modules rather
+# than extracting from .a archives.  This avoids a subtle bug: luaposix has
+# both ext/posix/time.c and ext/posix/sys/time.c, which produce
+# identically-named time.o members in libluaposix.a.  The archive stores both
+# (ar allows duplicate member names), but `ar x` extracts both to the same
+# filename — the second silently overwrites the first, losing one module's
+# symbols.
+#
+# For cmake-built archives (libluv.a, libuv.a) where we don't control the .o
+# file layout, we still extract — these don't have internal name collisions.
+#
+# Usage with luastatic:
+#
+#   luastatic main.lua $(PREFIX)/lib/static-lua.o \
+#     -I$(PREFIX)/include -lpthread -lm -ldl
+
+$(STATIC_LUA_O): $(BUILD)/static-lua/lr_preload.o \
+                  $(BUILD)/static-lua/lr_preload_lua.o \
+                  $(BUILD)/lua-obj/.built \
+                  $(BUILD)/luaposix-obj/.built \
+                  $(BUILD)/lpeg-obj/.built \
+                  $(BUILD)/lfs-obj/lfs.o \
+                  $(BUILD)/luaterm-obj/core.o \
+                  $(BUILD)/libluv.a $(LIBUV_A)
 	@mkdir -p $(BUILD)/static-lua/_merge
 	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_merge_static.sh
 	@printf 'MERGEDIR="%s/static-lua/_merge"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
 	@printf 'rm -rf "\044MERGEDIR"/*\n' >> $(BUILD)/_merge_static.sh
-	@printf 'for lib in \\\n' >> $(BUILD)/_merge_static.sh
-	@printf '  %s \\\n' '$(LUA_A)' >> $(BUILD)/_merge_static.sh
-	@printf '  %s \\\n' '$(BUILD)/libluaposix.a' >> $(BUILD)/_merge_static.sh
-	@printf '  %s \\\n' '$(BUILD)/libluv.a' >> $(BUILD)/_merge_static.sh
-	@printf '  %s \\\n' '$(LIBUV_A)' >> $(BUILD)/_merge_static.sh
-	@printf '  %s \\\n' '$(BUILD)/liblfs.a' >> $(BUILD)/_merge_static.sh
-	@printf '  %s \\\n' '$(BUILD)/liblpeg.a' >> $(BUILD)/_merge_static.sh
-	@printf '  %s\n' '$(BUILD)/libluaterm.a' >> $(BUILD)/_merge_static.sh
-	@printf 'do\n' >> $(BUILD)/_merge_static.sh
+	@printf '\n# --- cmake-built archives: extract (no internal name collisions) ---\n' >> $(BUILD)/_merge_static.sh
+	@printf 'for lib in %s %s; do\n' '$(BUILD)/libluv.a' '$(LIBUV_A)' >> $(BUILD)/_merge_static.sh
 	@printf '  name=\044(basename "\044lib" .a)\n' >> $(BUILD)/_merge_static.sh
 	@printf '  mkdir -p "\044MERGEDIR/\044name"\n' >> $(BUILD)/_merge_static.sh
 	@printf '  cd "\044MERGEDIR/\044name" && %s x "\044lib"\n' '$(AR)' >> $(BUILD)/_merge_static.sh
 	@printf 'done\n' >> $(BUILD)/_merge_static.sh
+	@printf '\n# --- our own .o files: copy directly (avoids ar x name collisions) ---\n' >> $(BUILD)/_merge_static.sh
+	@printf 'mkdir -p "\044MERGEDIR/lua-obj"\n' >> $(BUILD)/_merge_static.sh
+	@printf 'cp %s/lua-obj/*.o "\044MERGEDIR/lua-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'cp -R %s/luaposix-obj "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'rm -f "\044MERGEDIR/luaposix-obj/posix.o"\n' >> $(BUILD)/_merge_static.sh
+	@printf 'rm -f "\044MERGEDIR/luaposix-obj/.built" "\044MERGEDIR/luaposix-obj/.built-top" "\044MERGEDIR/luaposix-obj/.built-sys"\n' >> $(BUILD)/_merge_static.sh
+	@printf 'mkdir -p "\044MERGEDIR/lpeg-obj"\n' >> $(BUILD)/_merge_static.sh
+	@printf 'cp %s/lpeg-obj/*.o "\044MERGEDIR/lpeg-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'mkdir -p "\044MERGEDIR/lfs-obj"\n' >> $(BUILD)/_merge_static.sh
+	@printf 'cp %s/lfs-obj/lfs.o "\044MERGEDIR/lfs-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'mkdir -p "\044MERGEDIR/luaterm-obj"\n' >> $(BUILD)/_merge_static.sh
+	@printf 'cp %s/luaterm-obj/core.o "\044MERGEDIR/luaterm-obj/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf '\n# --- preload objects ---\n' >> $(BUILD)/_merge_static.sh
 	@printf 'cp %s/static-lua/lr_preload.o "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
 	@printf 'cp %s/static-lua/lr_preload_lua.o "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
-	@printf 'rm -f %s\n' '$@' >> $(BUILD)/_merge_static.sh
-	@printf 'find "\044MERGEDIR" -name "*.o" | sort | xargs %s rcs %s\n' '$(AR)' '$@' >> $(BUILD)/_merge_static.sh
-	@printf '%s %s\n' '$(RANLIB)' '$@' >> $(BUILD)/_merge_static.sh
+	@printf '\n# --- merge everything ---\n' >> $(BUILD)/_merge_static.sh
+	@printf 'find "\044MERGEDIR" -name "*.o" | sort | xargs ld -r -o %s\n' '$@' >> $(BUILD)/_merge_static.sh
 	@printf 'rm -rf "\044MERGEDIR"\n' >> $(BUILD)/_merge_static.sh
 	@sh $(BUILD)/_merge_static.sh
 	@echo ""
-	@echo "Built static library: $@"
+	@echo "Built relocatable object: $@"
 	@echo "  Contains: liblua luaposix luv libuv lfs lpeg lua-term + preload"
 	@echo ""
 	@echo "  Usage with luastatic:"
-	@echo "    luastatic main.lua $(PREFIX)/lib/static-lua.a \\"
+	@echo "    luastatic main.lua $(PREFIX)/lib/static-lua.o \\"
 	@echo "      -I$(PREFIX)/include -lpthread -lm -ldl"
 
-static-lua: $(STATIC_LUA_BIN) $(STATIC_LUA_A)
+# ---------------------------------------------------------------------------
+# Link the static binary using static-lua.a
+# ---------------------------------------------------------------------------
+
+static-lua: $(STATIC_LUA_BIN) $(STATIC_LUA_A) $(STATIC_LUA_O)
 
 # =============================================================================
 # 9. TEST
@@ -1833,6 +1933,9 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	fi
 	@if [ -f $(STATIC_LUA_A) ]; then \
 	  install -m 644 $(STATIC_LUA_A) $(PREFIX)/lib/static-lua.a; \
+	fi
+	@if [ -f $(STATIC_LUA_O) ]; then \
+	  install -m 644 $(STATIC_LUA_O) $(PREFIX)/lib/static-lua.o; \
 	fi
 
 # ---------------------------------------------------------------------------
