@@ -275,19 +275,50 @@ SHARED_FLAGS  := -fPIC
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-  SHARED_EXT    := dylib
-  SHARED_LINK   := -dynamiclib
-  LDFLAGS_LUA   := -lm
-  STATIC_EXTRA  :=
-  RPATH_FLAG     = -Wl,-rpath,'$(PREFIX)/lib'
-  NM_LUAOPEN_RE := luaopen_
+  SHARED_EXT          := dylib
+  SHARED_LINK         := -dynamiclib
+  # -install_name tells dyld HOW to reference this dylib when another
+  # binary links against it.  @rpath/ means "resolve via the binary's
+  # LC_RPATH list at runtime" instead of baking in an absolute path.
+  # Without this, macOS defaults to the literal build-time output path,
+  # which breaks on any other machine (or even a different directory).
+  SHARED_INSTALL_NAME := -install_name @rpath/liblua.$(SHARED_EXT)
+  LDFLAGS_LUA         := -lm
+  STATIC_EXTRA        :=
+  NM_LUAOPEN_RE       := luaopen_
 else
-  SHARED_EXT    := so
-  SHARED_LINK   := -shared
-  LDFLAGS_LUA   := -lm -ldl -lreadline -lcrypt
-  STATIC_EXTRA  := -static
-  RPATH_FLAG     = -Wl,-rpath,'$(PREFIX)/lib'
-  NM_LUAOPEN_RE := luaopen_
+  SHARED_EXT          := so
+  SHARED_LINK         := -shared
+  SHARED_INSTALL_NAME :=
+  LDFLAGS_LUA         := -lm -ldl -lreadline -lcrypt
+  STATIC_EXTRA        := -static
+  NM_LUAOPEN_RE       := luaopen_
+endif
+
+# ---------------------------------------------------------------------------
+# RPATH_FLAG — how the binary finds liblua.so/.dylib at runtime
+# ---------------------------------------------------------------------------
+#
+# RELOCATABLE=1:
+#   Use @executable_path/../lib (macOS) or $ORIGIN/../lib (Linux) so the
+#   binary finds liblua relative to its own location.  The entire prefix
+#   tree can be moved without rebuilding.
+#
+# RELOCATABLE=0 (default):
+#   Hardcode the absolute $(PREFIX)/lib path.  Simpler, but the binary
+#   breaks if the prefix is moved.
+#
+# Both modes also include the build directory as an RPATH so that
+# `make test` works before installation.
+
+ifeq ($(RELOCATABLE),1)
+  ifeq ($(UNAME_S),Darwin)
+    RPATH_FLAG = -Wl,-rpath,'@executable_path/../lib' -Wl,-rpath,'$(PREFIX)/lib'
+  else
+    RPATH_FLAG = -Wl,-rpath,'$$ORIGIN/../lib' -Wl,-rpath,'$(PREFIX)/lib'
+  endif
+else
+  RPATH_FLAG = -Wl,-rpath,'$(PREFIX)/lib'
 endif
 
 # ---------------------------------------------------------------------------
@@ -752,7 +783,7 @@ $(LUA_A): $(BUILD)/lua-obj/.built
 # runtime in every module.
 
 $(LUA_SO): $(BUILD)/lua-obj/.built
-	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
+	$(CC) $(SHARED_LINK) $(SHARED_INSTALL_NAME) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
 # ---------------------------------------------------------------------------
 # Relocatable support (RELOCATABLE=1)
