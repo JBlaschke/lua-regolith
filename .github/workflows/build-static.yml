@@ -4,13 +4,14 @@
 #
 # Platforms:
 #   linux-x86_64   — glibc-latest  (ubuntu-24.04)
-#   linux-x86_64   — glibc-legacy  (ubuntu-20.04, glibc 2.31)
+#   linux-x86_64   — glibc-legacy  (ubuntu:20.04 container, glibc 2.31)
 #   linux-x86_64   — musl          (alpine 3.20, fully static)
 #   linux-arm64    — glibc-latest  (ubuntu-24.04-arm)
 #   linux-arm64    — glibc-legacy  (ubuntu:20.04 container on arm runner)
 #   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
+#   freebsd-x86_64 — FreeBSD 14.2  (vmactions/freebsd-vm)
 #   macos-arm64    — Apple Silicon (macos-14)
-#   macos-x86_64   — Intel Mac    (macos-13)
+#   macos-x86_64   — Intel Mac    (macos-15-intel)
 #
 # Trigger: push a tag matching v* (e.g. v1.0.0)
 # ──────────────────────────────────────────────────────────────
@@ -73,8 +74,6 @@ jobs:
               libreadline-dev python3
             makefile:  Makefile
 
-          # Run an older Ubuntu container on the native ARM runner to get glibc
-          # 2.31 without cross-compilation.
           - name:      linux-arm64-glibc-legacy
             runner:    ubuntu-24.04-arm
             container: ubuntu:20.04
@@ -187,9 +186,9 @@ jobs:
               set -eux
               ${{ matrix.deps }}
               make -f ${{ matrix.makefile }} download
-              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" all
-              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" static-lua
-              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" install
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" RELOCATABLE=1 all
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" RELOCATABLE=1 static-lua
+              make -f ${{ matrix.makefile }} PREFIX="$PREFIX" RELOCATABLE=1 install
               make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
             '
 
@@ -219,10 +218,63 @@ jobs:
           retention-days: 5
 
   # ────────────────────────────────────────────────────────────
+  # FreeBSD — runs in a VM via vmactions/freebsd-vm
+  #
+  # This can't use the matrix because the VM action has its own
+  # prepare/run structure.  FreeBSD uses `gmake` for GNU Make.
+  # ────────────────────────────────────────────────────────────
+  build-freebsd:
+    runs-on: ubuntu-latest
+    env:
+      PREFIX: /home/runner/lua-regolith
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build in FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          copyback: true
+          envs: 'PREFIX'
+          prepare: |
+            pkg install -y gmake wget readline
+          run: |
+            set -eux
+            export CI=true
+            export LUA_PATH="$PREFIX/share/lua/5.4/?.lua;;"
+
+            gmake -f Makefile.lite download
+            gmake -f Makefile.lite PREFIX="$PREFIX" RELOCATABLE=1 all
+            gmake -f Makefile.lite PREFIX="$PREFIX" RELOCATABLE=1 static-lua
+            gmake -f Makefile.lite PREFIX="$PREFIX" RELOCATABLE=1 install
+            gmake -f Makefile.lite PREFIX="$PREFIX" test
+
+            echo "--- binary info ---"
+            file "$PREFIX/bin/lua-static" || true
+            "$PREFIX/bin/lua-static" -v
+            "$PREFIX/bin/lua-static" -e 'print("hello from lua-static")'
+
+      - name: Create tarball
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ARCHIVE="lua-regolith-${TAG}-freebsd-x86_64.tar.gz"
+          tar -czf "${GITHUB_WORKSPACE}/${ARCHIVE}" -C "$PREFIX" .
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebsd-x86_64
+          path: ${{ env.ARCHIVE }}
+          retention-days: 5
+
+  # ────────────────────────────────────────────────────────────
   # Collect every tarball and attach them to the GitHub Release
   # ────────────────────────────────────────────────────────────
   release:
-    needs: build
+    needs: [build, build-freebsd]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
