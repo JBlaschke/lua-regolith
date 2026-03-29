@@ -1057,6 +1057,7 @@ dkjson: $(DKJSON_FILE)
 # Here, we must pass them manually.
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
+STATIC_LUA_A   := $(BUILD)/static-lua.a
 
 # ---- Collect pure-Lua module sources ----------------------------------------
 
@@ -1148,7 +1149,60 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c \
 	@echo "  Bundled Lua modules: re dkjson term posix"
 	@file $@
 
-static-lua: $(STATIC_LUA_BIN)
+# ---------------------------------------------------------------------------
+# Build static-lua.a (fat archive for luastatic)
+# ---------------------------------------------------------------------------
+#
+# Merges all static libraries + the preload objects into a single archive.
+# This is the library counterpart of $(STATIC_LUA_BIN): it contains
+# everything EXCEPT lua.c's main(), so luastatic (or any other embedder)
+# can link a Lua script into a standalone binary with a single -l flag:
+#
+#   luastatic main.lua $(PREFIX)/lib/static-lua.a \
+#     -I$(PREFIX)/include -lpthread -lm -ldl
+#
+# The merge extracts each .a into its own subdirectory (to avoid filename
+# collisions — e.g. multiple archives may contain "init.o") then re-archives
+# everything.  Uses a generated script to avoid Make 3.81's $$ bug.
+
+$(STATIC_LUA_A): $(BUILD)/static-lua/lr_preload.o \
+                  $(BUILD)/static-lua/lr_preload_lua.o \
+                  $(LUA_A) \
+                  $(BUILD)/libluaposix.a $(BUILD)/libluv.a $(LIBUV_A) \
+                  $(BUILD)/liblfs.a $(BUILD)/liblpeg.a $(BUILD)/libluaterm.a
+	@mkdir -p $(BUILD)/static-lua/_merge
+	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_merge_static.sh
+	@printf 'MERGEDIR="%s/static-lua/_merge"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'rm -rf "\044MERGEDIR"/*\n' >> $(BUILD)/_merge_static.sh
+	@printf 'for lib in \\\n' >> $(BUILD)/_merge_static.sh
+	@printf '  %s \\\n' '$(LUA_A)' >> $(BUILD)/_merge_static.sh
+	@printf '  %s \\\n' '$(BUILD)/libluaposix.a' >> $(BUILD)/_merge_static.sh
+	@printf '  %s \\\n' '$(BUILD)/libluv.a' >> $(BUILD)/_merge_static.sh
+	@printf '  %s \\\n' '$(LIBUV_A)' >> $(BUILD)/_merge_static.sh
+	@printf '  %s \\\n' '$(BUILD)/liblfs.a' >> $(BUILD)/_merge_static.sh
+	@printf '  %s \\\n' '$(BUILD)/liblpeg.a' >> $(BUILD)/_merge_static.sh
+	@printf '  %s\n' '$(BUILD)/libluaterm.a' >> $(BUILD)/_merge_static.sh
+	@printf 'do\n' >> $(BUILD)/_merge_static.sh
+	@printf '  name=\044(basename "\044lib" .a)\n' >> $(BUILD)/_merge_static.sh
+	@printf '  mkdir -p "\044MERGEDIR/\044name"\n' >> $(BUILD)/_merge_static.sh
+	@printf '  cd "\044MERGEDIR/\044name" && %s x "\044lib"\n' '$(AR)' >> $(BUILD)/_merge_static.sh
+	@printf 'done\n' >> $(BUILD)/_merge_static.sh
+	@printf 'cp %s/static-lua/lr_preload.o "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'cp %s/static-lua/lr_preload_lua.o "\044MERGEDIR/"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
+	@printf 'rm -f %s\n' '$@' >> $(BUILD)/_merge_static.sh
+	@printf 'find "\044MERGEDIR" -name "*.o" | sort | xargs %s rcs %s\n' '$(AR)' '$@' >> $(BUILD)/_merge_static.sh
+	@printf '%s %s\n' '$(RANLIB)' '$@' >> $(BUILD)/_merge_static.sh
+	@printf 'rm -rf "\044MERGEDIR"\n' >> $(BUILD)/_merge_static.sh
+	@sh $(BUILD)/_merge_static.sh
+	@echo ""
+	@echo "Built static library: $@"
+	@echo "  Contains: liblua luaposix luv libuv lfs lpeg lua-term + preload"
+	@echo ""
+	@echo "  Usage with luastatic:"
+	@echo "    luastatic main.lua $(PREFIX)/lib/static-lua.a \\"
+	@echo "      -I$(PREFIX)/include -lpthread -lm -ldl"
+
+static-lua: $(STATIC_LUA_BIN) $(STATIC_LUA_A)
 
 # =============================================================================
 # 9. TEST
@@ -1338,6 +1392,9 @@ install-lua: $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
 	cd $(LUA_SRC) && find . -name '*.h' -exec install -m 644 {} $(PREFIX)/include/lua$(LUA_SHORT)/ \;
 	@if [ -f $(STATIC_LUA_BIN) ]; then \
 	  install -m 755 $(STATIC_LUA_BIN) $(PREFIX)/bin/lua-static; \
+	fi
+	@if [ -f $(STATIC_LUA_A) ]; then \
+	  install -m 644 $(STATIC_LUA_A) $(PREFIX)/lib/static-lua.a; \
 	fi
 
 install-luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built
