@@ -181,7 +181,7 @@ ifeq ($(UNAME_S),Darwin)
 else
   SHARED_EXT    := so
   SHARED_LINK   := -shared
-  LDFLAGS_LUA   := -lm -ldl -lreadline
+  LDFLAGS_LUA   := -lm -ldl -lreadline -lcrypt
   STATIC_EXTRA  := -static
   RPATH_FLAG     = -Wl,-rpath,'$(PREFIX)/lib'
   NM_LUAOPEN_RE := luaopen_
