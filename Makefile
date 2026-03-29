@@ -1319,7 +1319,14 @@ $(BUILD)/lpeg.$(LUA_MOD_EXT): $(BUILD)/lpeg-obj/.built $(LUA_SO)
 	$(CC) $(SHARED_LINK) -o $@ $(BUILD)/lpeg-obj/*.o -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: lpeg
-lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT)
+lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT) lpeg-lua-modules
+
+# Copy re.lua (ships with lpeg) to the build-tree lua-modules directory
+# so the test harness can find it on LUA_PATH.
+.PHONY: lpeg-lua-modules
+lpeg-lua-modules: $(LPEG_DIR)
+	@mkdir -p $(BUILD)/lua-modules
+	cp $(LPEG_DIR)/re.lua $(BUILD)/lua-modules/re.lua
 
 # =============================================================================
 # 6. LUA-TERM
@@ -1341,11 +1348,12 @@ $(BUILD)/libluaterm.a: $(BUILD)/luaterm-obj/core.o
 # The output is named term_core.so (not core.so) to avoid ambiguity.
 # At install time, it's placed at lib/lua/5.4/term/core.so, which is
 # where require("term.core") expects to find it.
-$(BUILD)/term_core.$(LUA_MOD_EXT): $(BUILD)/luaterm-obj/core.o $(LUA_SO)
+$(BUILD)/term/core.$(LUA_MOD_EXT): $(BUILD)/luaterm-obj/core.o $(LUA_SO)
+	@mkdir -p $(BUILD)/term
 	$(CC) $(SHARED_LINK) -o $@ $< -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 .PHONY: luaterm
-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
+luaterm: $(BUILD)/libluaterm.a $(BUILD)/term/core.$(LUA_MOD_EXT)
 
 # =============================================================================
 # 7. DKJSON (pure Lua)
@@ -1577,12 +1585,12 @@ static-lua: $(STATIC_LUA_BIN)
 #   (posix/unistd.so, posix/sys/stat.so) plus flat modules (luv.so,
 #   lfs.so, lpeg.so) and lua-term's oddly-named term_core.so.
 TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
-           LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);$(BUILD)/term_core.$(LUA_MOD_EXT);;" \
+           LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);;" \
            $(LUA_BIN)
 
 TEST_DEPS = $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
             $(BUILD)/lfs.$(LUA_MOD_EXT) $(BUILD)/lpeg.$(LUA_MOD_EXT) \
-            $(BUILD)/term_core.$(LUA_MOD_EXT) $(DKJSON_FILE)
+            $(BUILD)/term/core.$(LUA_MOD_EXT) $(DKJSON_FILE)
 
 # ---------------------------------------------------------------------------
 # Quick smoke test — embedded Lua script via heredoc
@@ -1848,14 +1856,14 @@ install-lpeg: $(BUILD)/liblpeg.a $(BUILD)/lpeg.$(LUA_MOD_EXT)
 	  install -m 644 $(LPEG_DIR)/re.lua $(PREFIX)/share/lua/$(LUA_SHORT)/re.lua; \
 	fi
 
-install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term_core.$(LUA_MOD_EXT)
+install-luaterm: $(BUILD)/libluaterm.a $(BUILD)/term/core.$(LUA_MOD_EXT)
 	install -d $(PREFIX)/lib \
 	           $(PREFIX)/lib/lua/$(LUA_SHORT)/term \
 	           $(PREFIX)/share/lua/$(LUA_SHORT)/term
 	install -m 644 $(BUILD)/libluaterm.a $(PREFIX)/lib/
 	# Install as term/core.so — Lua's require("term.core") searches for
 	# term/core.so on package.cpath.
-	install -m 755 $(BUILD)/term_core.$(LUA_MOD_EXT) \
+	install -m 755 $(BUILD)/term/core.$(LUA_MOD_EXT) \
 	  $(PREFIX)/lib/lua/$(LUA_SHORT)/term/core.$(LUA_MOD_EXT)
 	cd $(LUATERM_DIR)/term && find . -name '*.lua' -exec install -m 644 {} \
 	  $(PREFIX)/share/lua/$(LUA_SHORT)/term/ \;
