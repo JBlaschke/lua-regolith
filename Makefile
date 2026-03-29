@@ -426,13 +426,13 @@ relocate: $(LUA_DIR)
 	@echo "================================================================"
 
 clean:
+	rm -rf $(LUA_DIR) $(LUAPOSIX_DIR) $(LUV_DIR) $(LIBUV_DIR) \
+	       $(LFS_DIR) $(LPEG_DIR) $(LUATERM_DIR)
 	rm -rf $(BUILD)
 
 # distclean removes everything: build artifacts AND downloaded/extracted sources.
 # After distclean, you need `make download` again before building.
 distclean: clean
-	rm -rf $(LUA_DIR) $(LUAPOSIX_DIR) $(LUV_DIR) $(LIBUV_DIR) \
-	       $(LFS_DIR) $(LPEG_DIR) $(LUATERM_DIR)
 	rm -f lua-$(LUA_VER).tar.gz \
 	      luaposix-$(LUAPOSIX_VER).tar.gz \
 	      luv-$(LUV_VER).tar.gz \
