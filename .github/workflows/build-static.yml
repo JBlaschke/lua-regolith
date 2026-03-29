@@ -244,8 +244,8 @@ jobs:
             set -eux
             export CI=true
             export LUA_PATH="$PREFIX/share/lua/5.4/?.lua;;"
-            export CFLAGS="-I/usr/local/include"
-            export LDFLAGS="-L/usr/local/lib"
+            export C_INCLUDE_PATH=/usr/local/include
+            export LIBRARY_PATH=/usr/local/lib
 
             gmake -f Makefile.lite download
             gmake -f Makefile.lite PREFIX="$PREFIX" RELOCATABLE=1 all
