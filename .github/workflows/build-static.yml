@@ -3,10 +3,10 @@
 # GitHub Release created by the tag push.
 #
 # Platforms:
-#   linux-x86_64   — glibc-latest  (ubuntu-24.04, glibc 2.39)
+#   linux-x86_64   — glibc-latest  (ubuntu:25.10 container, glibc 2.42)
 #   linux-x86_64   — glibc-legacy  (centos:7 container, glibc 2.17)
 #   linux-x86_64   — musl          (alpine 3.20, fully static)
-#   linux-arm64    — glibc-latest  (ubuntu-24.04-arm, glibc 2.39)
+#   linux-arm64    — glibc-latest  (ubuntu:25.10 container on arm runner, glibc 2.42)
 #   linux-arm64    — glibc-legacy  (centos:7 container on arm runner, glibc 2.17)
 #   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
 #   freebsd-x86_64 — FreeBSD 14.2  (vmactions/freebsd-vm)
@@ -33,14 +33,17 @@ jobs:
       matrix:
         include:
           # ── Linux x86_64 ──────────────────────────────────
+          # Ubuntu 25.10 (glibc 2.42) — no native runner, so
+          # run as a container on ubuntu-24.04.
           - name:      linux-x86_64-glibc-latest
             runner:    ubuntu-24.04
-            container: ""
+            container: ubuntu:25.10
             docker_img: ""
             deps: >-
-              sudo apt-get update &&
-              sudo apt-get install -y build-essential cmake wget
-              libreadline-dev python3
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive
+              apt-get install -y build-essential cmake wget
+              libreadline-dev python3 git
             makefile:  Makefile
 
           # CentOS 7 (glibc 2.17) — covers RHEL 7/8, old SLES, etc.
@@ -70,12 +73,13 @@ jobs:
           # ── Linux ARM64 ──────────────────────────────────
           - name:      linux-arm64-glibc-latest
             runner:    ubuntu-24.04-arm
-            container: ""
+            container: ubuntu:25.10
             docker_img: ""
             deps: >-
-              sudo apt-get update &&
-              sudo apt-get install -y build-essential cmake wget
-              libreadline-dev python3
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive
+              apt-get install -y build-essential cmake wget
+              libreadline-dev python3 git
             makefile:  Makefile
 
           # CentOS 7 aarch64 — same docker_img approach.
