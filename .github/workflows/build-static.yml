@@ -64,7 +64,8 @@ jobs:
               yum install -y epel-release &&
               yum install -y gcc make cmake3 wget readline-devel ncurses-devel
               python3 git &&
-              ln -sf /usr/bin/cmake3 /usr/bin/cmake
+              ln -sf /usr/bin/cmake3 /usr/bin/cmake &&
+              export CC="gcc -std=gnu11"
             makefile:  Makefile
 
           - name:      linux-x86_64-musl
@@ -101,7 +102,8 @@ jobs:
               yum install -y epel-release &&
               yum install -y gcc make cmake3 wget readline-devel ncurses-devel
               python3 git &&
-              ln -sf /usr/bin/cmake3 /usr/bin/cmake
+              ln -sf /usr/bin/cmake3 /usr/bin/cmake &&
+              export CC="gcc -std=gnu11"
             makefile:  Makefile
 
           # JS actions (checkout, upload-artifact) can't run inside Alpine on
