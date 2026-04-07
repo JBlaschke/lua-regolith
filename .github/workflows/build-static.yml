@@ -11,7 +11,7 @@
 #   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
 #   freebsd-x86_64 — FreeBSD 14.2  (vmactions/freebsd-vm)
 #   macos-arm64    — Apple Silicon (macos-14)
-#   macos-x86_64   — Intel Mac     (macos-15-intel)
+#   macos-x86_64   — Intel Mac    (macos-15-intel)
 #
 # Trigger: push a tag matching v* (e.g. v1.0.0)
 # ──────────────────────────────────────────────────────────────
@@ -35,6 +35,9 @@ jobs:
           # ── Linux x86_64 ──────────────────────────────────
           # Ubuntu 25.10 (glibc 2.42) — no native runner, so
           # run as a container on ubuntu-24.04.
+          # Minimal container needs extra packages vs. a full runner:
+          # pkg-config for readline detection, libncurses-dev for
+          # static linking, and file/ca-certificates for general use.
           - name:      linux-x86_64-glibc-latest
             runner:    ubuntu-24.04
             container: ubuntu:25.10
@@ -42,8 +45,8 @@ jobs:
             deps: >-
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive
-              apt-get install -y build-essential cmake wget
-              libreadline-dev python3 git
+              apt-get install -y build-essential cmake wget libreadline-dev
+              libncurses-dev pkg-config file ca-certificates python3 git
             makefile:  Makefile
 
           # CentOS 7 (glibc 2.17) — covers RHEL 7/8, old SLES, etc.
@@ -57,7 +60,8 @@ jobs:
               sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo &&
               sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y epel-release &&
-              yum install -y gcc make cmake3 wget readline-devel python3 git &&
+              yum install -y gcc make cmake3 wget readline-devel
+              readline-static ncurses-devel ncurses-static python3 git &&
               ln -sf /usr/bin/cmake3 /usr/bin/cmake
             makefile:  Makefile
 
@@ -78,8 +82,9 @@ jobs:
             deps: >-
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive
-              apt-get install -y build-essential cmake wget
-              libreadline-dev python3 git
+              apt-get install -y build-essential cmake wget libreadline-dev
+              libncurses-dev pkg-config file ca-certificates
+              python3 git
             makefile:  Makefile
 
           # CentOS 7 aarch64 — same docker_img approach.
@@ -93,7 +98,8 @@ jobs:
               sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo &&
               sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y epel-release &&
-              yum install -y gcc make cmake3 wget readline-devel python3 git &&
+              yum install -y gcc make cmake3 wget readline-devel
+              readline-static ncurses-devel ncurses-static python3 git &&
               ln -sf /usr/bin/cmake3 /usr/bin/cmake
             makefile:  Makefile
 
