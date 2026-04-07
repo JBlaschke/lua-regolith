@@ -108,7 +108,6 @@ jobs:
               apt-get install -y build-essential cmake wget libreadline-dev
               libncurses-dev python3 git
             makefile:  Makefile
-            makefile:  Makefile
 
           # JS actions (checkout, upload-artifact) can't run inside Alpine on
           # ARM64 — Node musl-arm64 binaries aren't bundled.  Checkout on the
