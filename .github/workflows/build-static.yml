@@ -67,7 +67,8 @@ jobs:
               sed -i -e "s/^mirrorlist/#mirrorlist/" -e "s|^[# ]*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|" /etc/yum.repos.d/CentOS-SCL*.repo &&
               yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
               devtoolset-11-binutils make cmake3 wget readline-devel
-              ncurses-devel glibc-static python3 git &&
+              readline-static ncurses-devel ncurses-static glibc-static python3
+              git &&
               ln -sf /usr/bin/cmake3 /usr/bin/cmake &&
               . /opt/rh/devtoolset-11/enable
             makefile:  Makefile
