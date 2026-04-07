@@ -64,9 +64,7 @@ jobs:
               sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*.repo &&
               sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y centos-release-scl &&
-              sed -i "s/^mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-SCL*.repo &&
-              sed -i "s|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-SCL*.repo &&
-              sed -i "s|^baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-SCL*.repo &&
+              sed -i -e "s/^mirrorlist/#mirrorlist/" -e "s|^[# ]*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|" /etc/yum.repos.d/CentOS-SCL*.repo &&
               yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
               devtoolset-11-binutils make cmake3 wget readline-devel
               ncurses-devel python3 git &&
