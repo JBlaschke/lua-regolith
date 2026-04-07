@@ -60,8 +60,8 @@ jobs:
               sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo &&
               sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y epel-release &&
-              yum install -y gcc make cmake3 wget readline-devel
-              readline-static ncurses-devel ncurses-static python3 git &&
+              yum install -y gcc make cmake3 wget readline-devel ncurses-devel
+              python3 git &&
               ln -sf /usr/bin/cmake3 /usr/bin/cmake
             makefile:  Makefile
 
@@ -83,8 +83,7 @@ jobs:
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive
               apt-get install -y build-essential cmake wget libreadline-dev
-              libncurses-dev pkg-config file ca-certificates
-              python3 git
+              libncurses-dev pkg-config file ca-certificates python3 git
             makefile:  Makefile
 
           # CentOS 7 aarch64 — same docker_img approach.
@@ -98,8 +97,8 @@ jobs:
               sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo &&
               sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y epel-release &&
-              yum install -y gcc make cmake3 wget readline-devel
-              readline-static ncurses-devel ncurses-static python3 git &&
+              yum install -y gcc make cmake3 wget readline-devel ncurses-devel
+              python3 git &&
               ln -sf /usr/bin/cmake3 /usr/bin/cmake
             makefile:  Makefile
 
