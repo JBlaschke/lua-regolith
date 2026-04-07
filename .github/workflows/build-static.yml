@@ -11,7 +11,7 @@
 #   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
 #   freebsd-x86_64 — FreeBSD 14.2  (vmactions/freebsd-vm)
 #   macos-arm64    — Apple Silicon (macos-14)
-#   macos-x86_64   — Intel Mac    (macos-15-intel)
+#   macos-x86_64   — Intel Mac     (macos-15-intel)
 #
 # Trigger: push a tag matching v* (e.g. v1.0.0)
 # ──────────────────────────────────────────────────────────────
@@ -52,13 +52,15 @@ jobs:
           # CentOS 7 (glibc 2.17) — covers RHEL 7/8, old SLES, etc.
           # Uses docker_img path because centos:7's glibc 2.17 is too
           # old for the Node 20 runtime that actions/checkout@v4 needs.
+          # IMPORTANT: deps use double quotes (not single) because the
+          # string is expanded inside sh -c '...' in the docker run step.
           - name:      linux-x86_64-glibc-legacy
             runner:    ubuntu-24.04
             container: ""
             docker_img: centos:7
             deps: >-
-              sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo &&
-              sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
+              sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*.repo &&
+              sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y epel-release &&
               yum install -y gcc make cmake3 wget readline-devel ncurses-devel
               python3 git &&
@@ -94,8 +96,8 @@ jobs:
             container: ""
             docker_img: centos:7
             deps: >-
-              sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo &&
-              sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo &&
+              sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*.repo &&
+              sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*.repo &&
               yum install -y epel-release &&
               yum install -y gcc make cmake3 wget readline-devel ncurses-devel
               python3 git &&
@@ -188,6 +190,8 @@ jobs:
       #  Docker path (Alpine musl + CentOS 7 legacy)
       #  Checkout happens on the host; build runs inside the
       #  container with the workspace bind-mounted.
+      #  NOTE: deps are expanded inside sh -c '...', so they
+      #  must NOT contain single quotes — use double quotes.
       # ────────────────────────────────────────────────────
       - name: Build inside Docker container
         if: ${{ matrix.docker_img }}
