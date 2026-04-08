@@ -50,11 +50,14 @@ jobs:
             makefile:  Makefile
 
           # Rocky Linux 8 (glibc 2.28) — covers RHEL 8, SLES 15, etc.
+          # Static libs live in the PowerTools repo (disabled by default).
           - name:      linux-x86_64-glibc-legacy
             runner:    ubuntu-24.04
             container: rockylinux:8
             docker_img: ""
             deps: >-
+              dnf install -y dnf-plugins-core &&
+              dnf config-manager --set-enabled powertools &&
               dnf install -y gcc make cmake wget readline-devel ncurses-devel
               readline-static ncurses-static glibc-static python3 git
             makefile:  Makefile
@@ -86,6 +89,8 @@ jobs:
             container: rockylinux:8
             docker_img: ""
             deps: >-
+              dnf install -y dnf-plugins-core &&
+              dnf config-manager --set-enabled powertools &&
               dnf install -y gcc make cmake wget readline-devel ncurses-devel
               readline-static ncurses-static glibc-static python3 git
             makefile:  Makefile
