@@ -4,10 +4,10 @@
 #
 # Platforms:
 #   linux-x86_64   — glibc-latest  (ubuntu:25.10 container, glibc 2.42)
-#   linux-x86_64   — glibc-legacy  (rockylinux:8 container, glibc 2.28)
+#   linux-x86_64   — glibc-legacy  (debian:11 container, glibc 2.31)
 #   linux-x86_64   — musl          (alpine 3.20, fully static)
 #   linux-arm64    — glibc-latest  (ubuntu:25.10 container on arm runner, glibc 2.42)
-#   linux-arm64    — glibc-legacy  (rockylinux:8 container on arm runner, glibc 2.28)
+#   linux-arm64    — glibc-legacy  (debian:11 container on arm runner, glibc 2.31)
 #   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
 #   freebsd-x86_64 — FreeBSD 14.2  (vmactions/freebsd-vm)
 #   macos-arm64    — Apple Silicon (macos-14)
@@ -49,17 +49,18 @@ jobs:
               libncurses-dev pkg-config file ca-certificates python3 git
             makefile:  Makefile
 
-          # Rocky Linux 8 (glibc 2.28) — covers RHEL 8, SLES 15, etc.
-          # Static libs live in the PowerTools repo (disabled by default).
+          # Debian 11 Bullseye (glibc 2.31) — covers RHEL 8+, SLES 15+, etc.
+          # Debian -dev packages include static .a archives by default,
+          # so no extra repos or -static packages needed.
           - name:      linux-x86_64-glibc-legacy
             runner:    ubuntu-24.04
-            container: rockylinux:8
+            container: debian:11
             docker_img: ""
             deps: >-
-              dnf install -y dnf-plugins-core &&
-              dnf config-manager --set-enabled powertools &&
-              dnf install -y gcc make cmake wget readline-devel ncurses-devel
-              readline-static ncurses-static glibc-static python3 git
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive
+              apt-get install -y build-essential cmake wget libreadline-dev
+              libncurses-dev python3 git
             makefile:  Makefile
 
           - name:      linux-x86_64-musl
@@ -83,17 +84,16 @@ jobs:
               libncurses-dev pkg-config file ca-certificates python3 git
             makefile:  Makefile
 
-          # Rocky Linux 8 (glibc 2.28) for arm64 legacy.
+          # Debian 11 Bullseye (glibc 2.31) for arm64 legacy.
           - name:      linux-arm64-glibc-legacy
             runner:    ubuntu-24.04-arm
-            container: rockylinux:8
+            container: debian:11
             docker_img: ""
             deps: >-
-              dnf install -y dnf-plugins-core &&
-              dnf config-manager --set-enabled powertools &&
-              dnf config-manager --set-enabled devel &&
-              dnf install -y gcc make cmake wget readline-devel ncurses-devel
-              readline-static ncurses-static glibc-static python3 git
+              apt-get update &&
+              DEBIAN_FRONTEND=noninteractive
+              apt-get install -y build-essential cmake wget libreadline-dev
+              libncurses-dev python3 git
             makefile:  Makefile
 
           # JS actions (checkout, upload-artifact) can't run inside Alpine on
