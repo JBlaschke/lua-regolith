@@ -91,6 +91,7 @@ jobs:
             deps: >-
               dnf install -y dnf-plugins-core &&
               dnf config-manager --set-enabled powertools &&
+              dnf config-manager --set-enabled devel &&
               dnf install -y gcc make cmake wget readline-devel ncurses-devel
               readline-static ncurses-static glibc-static python3 git
             makefile:  Makefile
