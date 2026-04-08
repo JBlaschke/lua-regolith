@@ -60,7 +60,7 @@ jobs:
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive
               apt-get install -y build-essential cmake wget libreadline-dev
-              libncurses-dev python3 git
+              libncurses-dev file python3 git
             makefile:  Makefile
 
           - name:      linux-x86_64-musl
@@ -93,7 +93,7 @@ jobs:
               apt-get update &&
               DEBIAN_FRONTEND=noninteractive
               apt-get install -y build-essential cmake wget libreadline-dev
-              libncurses-dev python3 git
+              libncurses-dev file python3 git
             makefile:  Makefile
 
           # JS actions (checkout, upload-artifact) can't run inside Alpine on
