@@ -4,10 +4,10 @@
 #
 # Platforms:
 #   linux-x86_64   — glibc-latest  (ubuntu:25.10 container, glibc 2.42)
-#   linux-x86_64   — glibc-legacy  (centos:7 container, glibc 2.17)
+#   linux-x86_64   — glibc-legacy  (rockylinux:8 container, glibc 2.28)
 #   linux-x86_64   — musl          (alpine 3.20, fully static)
 #   linux-arm64    — glibc-latest  (ubuntu:25.10 container on arm runner, glibc 2.42)
-#   linux-arm64    — glibc-legacy  (ubuntu:20.04 container on arm runner, glibc 2.31)
+#   linux-arm64    — glibc-legacy  (rockylinux:8 container on arm runner, glibc 2.28)
 #   linux-arm64    — musl          (alpine 3.20 via docker on arm runner)
 #   freebsd-x86_64 — FreeBSD 14.2  (vmactions/freebsd-vm)
 #   macos-arm64    — Apple Silicon (macos-14)
@@ -49,28 +49,14 @@ jobs:
               libncurses-dev pkg-config file ca-certificates python3 git
             makefile:  Makefile
 
-          # CentOS 7 (glibc 2.17) — covers RHEL 7/8, old SLES, etc.
-          # Uses docker_img path because centos:7's glibc 2.17 is too
-          # old for the Node 20 runtime that actions/checkout@v4 needs.
-          # GCC 4.8 lacks stdatomic.h, so we install devtoolset-11
-          # (GCC 11) from the SCL repos (vault-fixed for EOL).
-          # IMPORTANT: deps use double quotes (not single) because the
-          # string is expanded inside sh -c '...' in the docker run step.
+          # Rocky Linux 8 (glibc 2.28) — covers RHEL 8, SLES 15, etc.
           - name:      linux-x86_64-glibc-legacy
             runner:    ubuntu-24.04
-            container: ""
-            docker_img: centos:7
+            container: rockylinux:8
+            docker_img: ""
             deps: >-
-              sed -i "s/mirrorlist/#mirrorlist/g" /etc/yum.repos.d/CentOS-*.repo &&
-              sed -i "s|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" /etc/yum.repos.d/CentOS-*.repo &&
-              yum install -y epel-release centos-release-scl &&
-              sed -i -e "s/^mirrorlist/#mirrorlist/" -e "s|^[# ]*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|" /etc/yum.repos.d/CentOS-SCL*.repo &&
-              yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++
-              devtoolset-11-binutils make cmake3 wget readline-devel
-              readline-static ncurses-devel ncurses-static glibc-static python3
-              git &&
-              ln -sf /usr/bin/cmake3 /usr/bin/cmake &&
-              . /opt/rh/devtoolset-11/enable
+              dnf install -y gcc make cmake wget readline-devel ncurses-devel
+              readline-static ncurses-static glibc-static python3 git
             makefile:  Makefile
 
           - name:      linux-x86_64-musl
@@ -94,20 +80,14 @@ jobs:
               libncurses-dev pkg-config file ca-certificates python3 git
             makefile:  Makefile
 
-          # Ubuntu 20.04 (glibc 2.31) for arm64 legacy.
-          # devtoolset/SCL is x86_64-only, so we can't use centos:7 on
-          # arm64 (GCC 4.8 lacks stdatomic.h). Ubuntu 20.04 gives us
-          # GCC 9.4 and glibc 2.31, which is a reasonable arm64 floor
-          # since RHEL 7 arm64 deployments are extremely rare in HPC.
+          # Rocky Linux 8 (glibc 2.28) for arm64 legacy.
           - name:      linux-arm64-glibc-legacy
             runner:    ubuntu-24.04-arm
-            container: ubuntu:20.04
+            container: rockylinux:8
             docker_img: ""
             deps: >-
-              apt-get update &&
-              DEBIAN_FRONTEND=noninteractive
-              apt-get install -y build-essential cmake wget libreadline-dev
-              libncurses-dev python3 git
+              dnf install -y gcc make cmake wget readline-devel ncurses-devel
+              readline-static ncurses-static glibc-static python3 git
             makefile:  Makefile
 
           # JS actions (checkout, upload-artifact) can't run inside Alpine on
@@ -193,7 +173,7 @@ jobs:
         run: make -f ${{ matrix.makefile }} PREFIX="$PREFIX" test
 
       # ────────────────────────────────────────────────────
-      #  Docker path (Alpine musl + CentOS 7 legacy)
+      #  Docker path (ARM64 + Alpine)
       #  Checkout happens on the host; build runs inside the
       #  container with the workspace bind-mounted.
       #  NOTE: deps are expanded inside sh -c '...', so they
