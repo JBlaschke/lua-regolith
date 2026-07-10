@@ -60,7 +60,7 @@
 
 SHELL := /bin/sh
 .SUFFIXES:
-MAKEFLAGS += --no-builtin-rules --no-builtin-variables
+MAKEFLAGS += --no-builtin-rules
 
 # =============================================================================
 # USER-CONFIGURABLE KNOBS
