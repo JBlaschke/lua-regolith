@@ -674,8 +674,15 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 LUA_SRC   := $(LUA_DIR)/src
 LUA_A     := $(BUILD)/liblua.a
 LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
-LUA_BIN   := $(BUILD)/lua
+LUA_BIN_PLAIN := $(BUILD)/lua-plain
 LUAC_BIN  := $(BUILD)/luac
+
+LUA_BIN_RELOC := $(BUILD)/lua-reloc
+ifeq ($(RELOCATABLE),1)
+LUA_BIN   := $(LUA_BIN_RELOC)
+else
+LUA_BIN   := $(LUA_BIN_PLAIN)
+endif
 
 # ---------------------------------------------------------------------------
 # Patch luaconf.h — hardcode PREFIX into the interpreter
@@ -839,8 +846,6 @@ $(LUA_SO): $(BUILD)/lua-obj/.built
 # ifeq / else / endif is GNU Make's conditional syntax.  It's evaluated at
 # parse time (not build time), so only one branch's rules are ever defined.
 
-ifeq ($(RELOCATABLE),1)
-
 # Patch lua.c: insert lr_set_relocatable_paths(L) after luaL_openlibs(L)
 #
 # awk '{print} /pattern/{print "extra"}' prints every line, and additionally
@@ -878,15 +883,13 @@ $(BUILD)/relocatable/lr_relocatable.o: src/lr_relocatable.c src/lr_relocatable.h
 # -Wl,-rpath,$(BUILD) — embed the build directory as an RPATH so the
 # binary can find liblua.so during development/testing (before install).
 # $(RPATH_FLAG) adds the install-time RPATH ($(PREFIX)/lib) as well.
-$(LUA_BIN): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(LUA_SO)
+$(LUA_BIN_RELOC): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -Isrc \
 	  -include src/lr_relocatable.h \
 	  -DLR_LUA_SHORT='"$(LUA_SHORT)"' \
 	  -o $@ $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
 	  $(RPATH_FLAG)
-
-else
 
 # Default: build lua directly from source (hardcoded paths from luaconf.h).
 #
@@ -896,12 +899,10 @@ else
 #
 # -L$(BUILD) -llua — link against liblua.so in the build directory.
 # The linker searches -L paths for libraries named lib<name>.so.
-$(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_SO)
+$(LUA_BIN_PLAIN): $(LUA_SRC)/lua.c $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
 	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
-
-endif
 
 # luac (the Lua compiler) is always statically linked against liblua.a. It
 # doesn't need the shared library or relocatable paths — it's a simple offline
