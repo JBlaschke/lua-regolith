@@ -10,19 +10,24 @@
 #
 # libuv and luv are compiled directly from their C source files rather than
 # via cmake.  The platform-specific source file list for libuv is maintained
-# here — it is stable across libuv 1.4x releases.  If you bump to libuv 2.x,
-# audit the list against their CMakeLists.txt.
+# here — it was last audited against libuv 1.52.x (the v1.x branch
+# CMakeLists.txt).  If you bump LIBUV_VER, diff the lists below against the
+# new CMakeLists.txt: the lists are stable within a minor series but the
+# 1.45 io_uring rework, for example, merged epoll.c into linux.c and added
+# thread-common.c.
 #
-# Usage:
+# Usage (use gmake on the BSDs — this file requires GNU make):
 #   make -f Makefile.lite download
 #   make -f Makefile.lite verify
 #   make -f Makefile.lite PREFIX=/opt/lua-regolith all
-#   make -f Makefile.lite PREFIX=/opt/lua-regolith install
 #   make -f Makefile.lite PREFIX=/opt/lua-regolith static-lua
+#   make -f Makefile.lite PREFIX=/opt/lua-regolith install
 #   make -f Makefile.lite PREFIX=/opt/lua-regolith test
 #   make -f Makefile.lite clean / distclean
 #
-# Supported platforms: Linux, macOS, FreeBSD.
+# Supported platforms: Linux, macOS, FreeBSD, OpenBSD.
+# (The full Makefile delegates platform detection to cmake; the OpenBSD
+# branch exists only here, since Makefile.lite is the build used there.)
 #
 # Both Makefiles produce identical install layouts and are interchangeable —
 # `make test` validates the same things either way.
@@ -37,11 +42,13 @@
 # In brief:
 #   SHELL := /bin/sh  — prevents fish/zsh/etc. from breaking recipes
 #   .SUFFIXES:        — disables built-in suffix rules (.c → .o, etc.)
-#   --no-builtin-rules — disables ALL implicit rules (suffix + pattern)
+#   --no-builtin-rules --no-builtin-variables — disables ALL implicit rules
+#     and Make's built-in variable defaults (our ?= assignments below provide
+#     the defaults instead)
 
 SHELL := /bin/sh
 .SUFFIXES:
-MAKEFLAGS += --no-builtin-rules
+MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 
 # =============================================================================
 # USER-CONFIGURABLE KNOBS
@@ -69,10 +76,10 @@ NPROC       := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || ech
 # Identical to the full Makefile.  See there for detailed explanations of
 # := vs ?= assignment semantics and the LFS tag/underscore convention.
 
-LUA_VER       := 5.4.7
-LUAPOSIX_VER  := 36.2.1
-LUV_VER       := 1.48.0-2
-LIBUV_VER     := 1.48.0
+LUA_VER       := 5.5.0
+LUAPOSIX_VER  := 36.3
+LUV_VER       := 1.52.1-0
+LIBUV_VER     := 1.52.1
 LFS_VER       := 1.9.0
 # luafilesystem uses underscores in tags: v1.9.0 → v1_9_0
 LFS_TAG       := v$(subst .,_,$(LFS_VER))
@@ -83,10 +90,10 @@ DKJSON_VER    := 2.8
 
 # SHA-256 checksums (set to empty to skip verification for that file).
 # Confirmed from official upstream announcements / trusted package repos:
-LUA_SHA256      := 9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30
-LUAPOSIX_SHA256 := 44e5087cd3c47058f9934b90c0017e4cf870b71619f99707dd433074622debb1
-LUV_SHA256      := 2c3a1ddfebb4f6550293a40ee789f7122e97647eede51511f57203de48c03b7a
-LIBUV_SHA256    := 8c253adb0f800926a6cbd1c6576abae0bc8eb86a4f891049b72f9e5b7dc58f33
+LUA_SHA256      := 57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d
+LUAPOSIX_SHA256 := 82cd9a96c41a4a3205c050206f0564ff4456f773a8f9ffc9235ff8f1907ca5e6
+LUV_SHA256      := 3e6eb820a3aee034f85f9cce9bd77b5d42f34d128a1ccec877adf28c913577c7
+LIBUV_SHA256    := 478baf2599bfbc882c355288c9cb6f92e0e7dda435fa04031fa5b607cf3f414c
 LFS_SHA256      := 1142c1876e999b3e28d1c236bf21ffd9b023018e336ac25120fb5373aade1450
 LPEG_SHA256     := 4b155d67d2246c1ffa7ad7bc466c1ea899bbc40fef0257cc9c03cecbaed4352a
 LUATERM_SHA256  := 0cb270be22dfc262beec2f4ffc66b878ccaf236f537d693fa36c8f578fc51aa6
@@ -99,7 +106,7 @@ DKJSON_SHA256   := eb3bf160688fb395a2db6bc52eeff4f7855a6321d2b41bdc754554d13f4e7
 # See the full Makefile for detailed explanations of LUA_SHORT extraction
 # and the FOO_DIR / FOO_URL naming convention.
 
-# Extract major.minor automatically from LUA_VER (e.g. 5.4.7 → 5.4)
+# Extract major.minor automatically from LUA_VER (e.g. 5.5.0 → 5.5)
 LUA_SHORT     := $(shell echo $(LUA_VER) | sed 's/\([0-9]*\.[0-9]*\).*/\1/')
 
 LUA_DIR       := lua-$(LUA_VER)
@@ -141,7 +148,7 @@ BUILD         := $(CURDIR)/build
 # This is a subtle but important ordering constraint.  With := assignment,
 # Make expands the right-hand side immediately at parse time.  If LUA_SRC
 # isn't defined yet, the expansion produces an empty string, and the include
-# paths silently become wrong (e.g. -I/src instead of -Ilua-5.4.7/src).
+# paths silently become wrong (e.g. -I/src instead of -Ilua-5.5.0/src).
 # The build would then fail with "lua.h: No such file or directory" during
 # the libuv or luv compilation — a confusing error that's far from the
 # actual cause (a missing variable definition 200 lines away).
@@ -156,11 +163,13 @@ LUA_SRC       := $(LUA_DIR)/src
 # COMPILER FLAGS
 # =============================================================================
 #
-# See the full Makefile for explanations of LUA_CFLAGS defines and
-# why SHARED_FLAGS uses -fPIC.
+# See the full Makefile for explanations of why SHARED_FLAGS uses -fPIC.
 
 CFLAGS        ?= -O2 -Wall
-LUA_CFLAGS    := $(CFLAGS) -DLUA_USE_POSIX -DLUA_USE_DLOPEN
+# LUA_SYS_DEFS is assigned per-platform below (recursive `=` picks it up).
+# LUA_USE_LINUX/LUA_USE_MACOSX expand to POSIX+DLOPEN on Lua <= 5.4, and on
+# 5.5 additionally set LUA_READLINELIB so lua.c dlopen()s readline at runtime.
+LUA_CFLAGS    = $(CFLAGS) $(LUA_SYS_DEFS)
 SHARED_FLAGS  := -fPIC
 
 # =============================================================================
@@ -168,10 +177,19 @@ SHARED_FLAGS  := -fPIC
 # =============================================================================
 #
 # See the full Makefile for detailed explanations of each platform variable
-# (SHARED_EXT, SHARED_LINK, LDFLAGS_LUA, STATIC_EXTRA, RPATH_FLAG, etc.)
+# (SHARED_EXT, SHARED_LINK, SHARED_SONAME, LDFLAGS_LUA, STATIC_EXTRA,
+# RPATH_FLAG, etc.)
+#
+# The OpenBSD branch is Makefile.lite-only.  Notable OpenBSD differences:
+#   - dlopen(3) lives in libc; there is no libdl, so no -ldl.
+#   - crypt(3) also lives in libc; there is no libcrypt — the LCRYPT probe
+#     below comes back empty, which is exactly right.
+#   - GNU make is `gmake` from ports; the base system make cannot parse
+#     this file.
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
+  LUA_SYS_DEFS        := -DLUA_USE_MACOSX
   SHARED_EXT          := dylib
   SHARED_LINK         := -dynamiclib
   # -install_name tells dyld HOW to reference this dylib when another
@@ -180,17 +198,37 @@ ifeq ($(UNAME_S),Darwin)
   # Without this, macOS defaults to the literal build-time output path,
   # which breaks on any other machine (or even a different directory).
   SHARED_INSTALL_NAME := -install_name @rpath/liblua.$(SHARED_EXT)
+  SHARED_SONAME       :=
   LDFLAGS_LUA         := -lm
   STATIC_EXTRA        :=
   NM_LUAOPEN_RE       := luaopen_
-else
+else ifeq ($(UNAME_S),OpenBSD)
+  LUA_SYS_DEFS        := -DLUA_USE_LINUX
   SHARED_EXT          := so
   SHARED_LINK         := -shared
   SHARED_INSTALL_NAME :=
-  LDFLAGS_LUA         := -lm -ldl -lreadline -lcrypt
+  SHARED_SONAME       := -Wl,-soname,liblua.so
+  # No libdl on OpenBSD: dlopen() is in libc.
+  LDFLAGS_LUA         := -lm
+  STATIC_EXTRA        := -static
+  NM_LUAOPEN_RE       := luaopen_
+else
+  LUA_SYS_DEFS        := -DLUA_USE_LINUX
+  SHARED_EXT          := so
+  SHARED_LINK         := -shared
+  SHARED_INSTALL_NAME :=
+  SHARED_SONAME       := -Wl,-soname,liblua.so
+  LDFLAGS_LUA         := -lm -ldl
   STATIC_EXTRA        := -static
   NM_LUAOPEN_RE       := luaopen_
 endif
+
+# Separate libcrypt only exists on some systems (glibc via libxcrypt; macOS
+# and OpenBSD have crypt() in libc/libSystem).  Detect once; empty when
+# absent.  Only the luaposix .so links and the static binary need it.
+# This replaces the old hardcoded -lcrypt in LDFLAGS_LUA, which broke on
+# systems without a libcrypt.
+LCRYPT := $(shell printf 'int main(void){return 0;}\n' | $(CC) -x c - -lcrypt -o /dev/null 2>/dev/null && echo -lcrypt)
 
 # ---------------------------------------------------------------------------
 # RPATH_FLAG — how the binary finds liblua.so/.dylib at runtime
@@ -221,13 +259,19 @@ endif
 # ---- luaposix platform defines (mirrors lukefile) ---------------------------
 #
 # See the full Makefile for explanations of each feature-test macro.
+#
+# OpenBSD deliberately gets NO defines: its headers expose the full BSD API
+# by default, and feature-test macros only restrict visibility there.  The
+# probe-driven config below adapts to whatever ends up visible.
 
 ifeq ($(UNAME_S),Darwin)
-  LUAPOSIX_PLAT_DEFS := -D_DARWIN_C_SOURCE
+  LUAPOSIX_PLAT_DEFS := -D_DARWIN_C_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
 else ifeq ($(UNAME_S),Linux)
   LUAPOSIX_PLAT_DEFS := -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
 else ifeq ($(UNAME_S),FreeBSD)
   LUAPOSIX_PLAT_DEFS := -D__BSD_VISIBLE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
+else ifeq ($(UNAME_S),OpenBSD)
+  LUAPOSIX_PLAT_DEFS :=
 else
   LUAPOSIX_PLAT_DEFS := -D_POSIX_C_SOURCE=200809L
 endif
@@ -252,22 +296,28 @@ LUA_MOD_EXT := so
 #   LIBUV_SRC_COMMON — platform-independent core (event loop, timers,
 #     thread pool, DNS, etc.).  These compile on every OS.
 #
-#   LIBUV_SRC_UNIX — shared across all Unix-like systems (Linux, macOS,
-#     FreeBSD).  Covers the POSIX layer: pipes, signals, processes, TCP,
-#     UDP, TTY, filesystem ops, etc.
+#   LIBUV_SRC_UNIX — shared across all Unix-like systems.  Covers the
+#     POSIX layer: pipes, signals, processes, TCP, UDP, TTY, filesystem
+#     ops, etc.
 #
 #   LIBUV_SRC_PLAT — platform-specific files selected by ifeq(UNAME_S).
 #     These handle the parts where POSIX doesn't provide a portable API:
-#       Linux:   epoll, /proc, getrandom
+#       Linux:   io_uring/epoll (inside linux.c), /proc, getrandom
 #       macOS:   kqueue, FSEvents, _NSGetExecutablePath
-#       FreeBSD: kqueue, sysctl, /proc alternatives
+#       FreeBSD: kqueue, sysctl
+#       OpenBSD: kqueue, sysctl, getentropy
 #
 # Maintenance burden:
-#   These lists are stable across libuv 1.4x point releases (1.44 → 1.48
-#   didn't change the file list).  A MAJOR version bump (e.g. libuv 2.x)
-#   may reorganize sources — in that case, diff the new CMakeLists.txt
-#   against these lists and update accordingly.  The `make test` target
-#   exercises libuv (via luv) thoroughly enough to catch missing files.
+#   Last audited against the libuv v1.x CMakeLists.txt (1.52.x series).
+#   Changes since the 1.48 lists that used to live here:
+#     - src/thread-common.c added to the common tier (barrier code shared
+#       between the unix and win backends).
+#     - src/unix/epoll.c removed from the Linux tier — it no longer exists;
+#       the epoll/io_uring backend lives entirely in src/unix/linux.c.
+#     - -lkvm dropped on FreeBSD — upstream only links kvm on NetBSD.
+#   On the next LIBUV_VER bump, diff these lists against the new
+#   CMakeLists.txt.  The `make test` target exercises libuv (via luv)
+#   thoroughly enough to catch missing files.
 #
 # All paths are relative to $(LIBUV_DIR) and are prefixed with the full
 # path at compile time in the build script (section 3a below).
@@ -279,6 +329,7 @@ LIBUV_SRC_COMMON := \
 	src/random.c \
 	src/strscpy.c \
 	src/strtok.c \
+	src/thread-common.c \
 	src/threadpool.c \
 	src/timer.c \
 	src/uv-common.c \
@@ -305,6 +356,11 @@ LIBUV_SRC_UNIX := \
 	src/unix/tty.c \
 	src/unix/udp.c
 
+# Defines that libuv's CMake build applies on every non-Windows platform.
+# _FILE_OFFSET_BITS=64 / _LARGEFILE_SOURCE matter on 32-bit targets (large
+# file support); they're no-ops on 64-bit systems.
+LIBUV_COMMON_DEFS := -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE
+
 # ---------------------------------------------------------------------------
 # Platform-specific libuv sources and flags
 # ---------------------------------------------------------------------------
@@ -317,7 +373,7 @@ LIBUV_SRC_UNIX := \
 #
 # The $(error ...) at the bottom is GNU Make's built-in error function.
 # If none of the ifeq branches match (i.e., UNAME_S is something like
-# "OpenBSD" or "SunOS"), Make stops immediately with a clear message
+# "NetBSD" or "SunOS"), Make stops immediately with a clear message
 # telling the user to use the full Makefile (which delegates to cmake
 # for platform detection).  This is much better than letting the build
 # proceed with an empty source list and failing cryptically later.
@@ -328,14 +384,15 @@ ifeq ($(UNAME_S),Linux)
 	src/unix/procfs-exepath.c \
 	src/unix/proctitle.c \
 	src/unix/random-getrandom.c \
-	src/unix/random-sysctl-linux.c \
-	src/unix/epoll.c
-  # -D_GNU_SOURCE — expose GNU extensions (epoll, signalfd, etc.)
+	src/unix/random-sysctl-linux.c
+  # -D_GNU_SOURCE — expose GNU extensions (epoll, io_uring, signalfd, etc.)
   # -D_POSIX_C_SOURCE=200112 — POSIX.1-2001 features
   LIBUV_PLAT_DEFS := -D_GNU_SOURCE -D_POSIX_C_SOURCE=200112
   # -lpthread — threading support (uv_thread_create, etc.)
   # -ldl — dynamic loading (used by libuv internally)
-  LIBUV_PLAT_LIBS := -lpthread -ldl
+  # -lrt — matches upstream; needed for clock_/timer_ symbols on old glibc,
+  #        harmless no-op on modern glibc and musl
+  LIBUV_PLAT_LIBS := -lpthread -ldl -lrt
 else ifeq ($(UNAME_S),Darwin)
   LIBUV_SRC_PLAT := \
 	src/unix/bsd-ifaddrs.c \
@@ -359,10 +416,21 @@ else ifeq ($(UNAME_S),FreeBSD)
 	src/unix/posix-hrtime.c \
 	src/unix/random-getrandom.c
   LIBUV_PLAT_DEFS :=
-  # -lkvm — kernel virtual memory library (for process info on FreeBSD)
-  LIBUV_PLAT_LIBS := -lpthread -lkvm
+  # NOTE: -lkvm is no longer needed — libuv dropped its FreeBSD kvm usage
+  # (upstream only links kvm on NetBSD these days).
+  LIBUV_PLAT_LIBS := -lpthread
+else ifeq ($(UNAME_S),OpenBSD)
+  LIBUV_SRC_PLAT := \
+	src/unix/bsd-ifaddrs.c \
+	src/unix/bsd-proctitle.c \
+	src/unix/kqueue.c \
+	src/unix/openbsd.c \
+	src/unix/posix-hrtime.c \
+	src/unix/random-getentropy.c
+  LIBUV_PLAT_DEFS :=
+  LIBUV_PLAT_LIBS := -lpthread
 else
-  $(error Makefile.lite supports Linux, macOS, and FreeBSD. For other platforms use the full Makefile with cmake.)
+  $(error Makefile.lite supports Linux, macOS, FreeBSD, and OpenBSD. For other platforms use the full Makefile with cmake.)
 endif
 
 # Combine all three tiers into the complete source file list.
@@ -383,7 +451,8 @@ LIBUV_SRC_ALL := $(LIBUV_SRC_COMMON) $(LIBUV_SRC_UNIX) $(LIBUV_SRC_PLAT)
 
 LIBUV_INC     := -I$(CURDIR)/$(LIBUV_DIR)/include \
                  -I$(CURDIR)/$(LIBUV_DIR)/src
-LIBUV_CFLAGS  := $(CFLAGS) $(SHARED_FLAGS) $(LIBUV_INC) $(LIBUV_PLAT_DEFS)
+LIBUV_CFLAGS  := $(CFLAGS) $(SHARED_FLAGS) $(LIBUV_INC) \
+                 $(LIBUV_COMMON_DEFS) $(LIBUV_PLAT_DEFS)
 
 # =============================================================================
 # LUV INCLUDE PATHS (built without cmake — Makefile.lite only)
@@ -395,7 +464,7 @@ LIBUV_CFLAGS  := $(CFLAGS) $(SHARED_FLAGS) $(LIBUV_INC) $(LIBUV_PLAT_DEFS)
 # LUV_COMPAT_INC — conditional lua-compat-5.3 include path
 #
 # luv ships a compatibility shim (lua-compat-5.3) under deps/ that provides
-# Lua 5.3 API functions when building against Lua 5.1/5.2.  For Lua 5.4,
+# Lua 5.3 API functions when building against Lua 5.1/5.2.  For Lua 5.4+,
 # this shim is technically unnecessary, but some luv source files still
 # #include its headers unconditionally.
 #
@@ -435,7 +504,7 @@ LUV_CFLAGS := $(CFLAGS) $(SHARED_FLAGS) $(LUV_INC)
 # See the full Makefile for explanations of .PHONY, `all`, `install`, etc.
 # The only difference here is the install banner mentions "Makefile.lite".
 
-.PHONY: all install clean distclean download verify test static-lua
+.PHONY: all install clean distclean download verify test static-lua dkjson relocate
 
 all: lua liblua-shared luaposix luv lfs lpeg luaterm dkjson
 
@@ -458,21 +527,29 @@ install: all install-lua install-luaposix install-luv \
 	@echo "     --with-luac=$(PREFIX)/bin/luac"
 	@echo "================================================================"
 
-# ---- Relocate (recompile lua/luac with a new PREFIX) ------------------------
+# =============================================================================
+# RELOCATE — recompile lua/luac with a new PREFIX
+# =============================================================================
 #
-# See the full Makefile for the detailed design explanation.
+# See the full Makefile for the detailed design explanation.  With the
+# $(BUILD)/.prefix content-stamp below, a plain
+# `make -f Makefile.lite PREFIX=/new/path install` also does the right thing;
+# this target remains as the explicit, minimal-rebuild spelling.
 # The only difference: $(MAKE) -f Makefile.lite (recursive make must
 # specify this file explicitly, since it's not the default Makefile).
 
 relocate: $(LUA_DIR)
 	@echo "  Relocating to PREFIX=$(PREFIX) ..."
+	@# Strip the existing override block from luaconf.h
 	@if grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
 	  sed '/\/\* ---- BUNDLED_LUA_PREFIX_OVERRIDE ----/,/\/\* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ----/d' \
 	    $(LUA_SRC)/luaconf.h > $(LUA_SRC)/luaconf.h.new; \
 	  mv $(LUA_SRC)/luaconf.h.new $(LUA_SRC)/luaconf.h; \
 	fi
+	@# Remove build markers to force recompilation of lua core only
 	rm -f $(BUILD)/.lua-patched $(BUILD)/lua-obj/.built
 	rm -f $(LUA_A) $(LUA_SO) $(LUA_BIN) $(LUAC_BIN)
+	@# Rebuild lua core
 	$(MAKE) -f Makefile.lite lua liblua-shared
 	@echo ""
 	@echo "================================================================"
@@ -483,7 +560,6 @@ relocate: $(LUA_DIR)
 	@echo ""
 	@echo " Run 'make -f Makefile.lite PREFIX=$(PREFIX) install' to install."
 	@echo "================================================================"
-
 
 clean:
 	rm -rf $(LUA_DIR) $(LUAPOSIX_DIR) $(LUV_DIR) $(LIBUV_DIR) \
@@ -615,7 +691,8 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 # See the full Makefile for:
 #   - macOS / Make 3.81 compatibility notes (BUG 1 and BUG 2)
 #   - Detailed explanation of the luaconf.h patching strategy
-#   - The stamp file pattern (.lua-patched, .built)
+#   - The stamp file pattern (.lua-patched, .built) and the .prefix
+#     content-stamp that invalidates them on PREFIX changes
 #   - Why lua.o and luac.o are removed from the object directory
 #   - The ar rcs / ranlib commands
 #   - RELOCATABLE=1 design and implementation
@@ -625,13 +702,34 @@ $(LUATERM_DIR): luaterm-$(LUATERM_VER).tar.gz
 
 LUA_A     := $(BUILD)/liblua.a
 LUA_SO    := $(BUILD)/liblua.$(SHARED_EXT)
-LUA_BIN   := $(BUILD)/lua
+LUA_BIN_PLAIN := $(BUILD)/lua-plain
 LUAC_BIN  := $(BUILD)/luac
 
-$(BUILD)/.lua-patched: $(LUA_DIR)
+LUA_BIN_RELOC := $(BUILD)/lua-reloc
+ifeq ($(RELOCATABLE),1)
+LUA_BIN   := $(LUA_BIN_RELOC)
+else
+LUA_BIN   := $(LUA_BIN_PLAIN)
+endif
+
+# Content-stamp: touched only when PREFIX actually changes, so a PREFIX
+# change automatically invalidates .lua-patched and the lua core rebuild.
+$(BUILD)/.prefix: FORCE
 	@mkdir -p $(BUILD)
-	@if ! grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
-	  { \
+	@echo '$(PREFIX)' | cmp -s - $@ || echo '$(PREFIX)' > $@
+
+.PHONY: FORCE
+FORCE:
+
+$(BUILD)/.lua-patched: $(LUA_DIR) $(BUILD)/.prefix
+	@mkdir -p $(BUILD)
+	@# Strip any stale override block, then append fresh (idempotent).
+	@if grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
+	  sed '/\/\* ---- BUNDLED_LUA_PREFIX_OVERRIDE ----/,/\/\* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ----/d' \
+	    $(LUA_SRC)/luaconf.h > $(LUA_SRC)/luaconf.h.new; \
+	  mv $(LUA_SRC)/luaconf.h.new $(LUA_SRC)/luaconf.h; \
+	fi
+	@{ \
 	    echo ''; \
 	    echo '/* ---- BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
 	    echo '/* Appended by lua-regolith Makefile.lite. */'; \
@@ -662,8 +760,7 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	    echo '#define LUA_CPATH_DEFAULT LUA_CDIR"?.$(LUA_MOD_EXT);"LUA_CDIR"loadall.$(LUA_MOD_EXT);""./?.$(LUA_MOD_EXT)"'; \
 	    echo ''; \
 	    echo '/* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
-	  } >> $(LUA_SRC)/luaconf.h; \
-	fi
+	} >> $(LUA_SRC)/luaconf.h
 	touch $@
 
 $(BUILD)/lua-obj/.built: $(BUILD)/.lua-patched
@@ -678,19 +775,25 @@ $(LUA_A): $(BUILD)/lua-obj/.built
 	$(RANLIB) $@
 
 $(LUA_SO): $(BUILD)/lua-obj/.built
-	$(CC) $(SHARED_LINK) $(SHARED_INSTALL_NAME) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
+	$(CC) $(SHARED_LINK) $(SHARED_INSTALL_NAME) $(SHARED_SONAME) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
 # ---- Relocatable support (RELOCATABLE=1) ------------------------------------
 #
 # See full Makefile for detailed design notes on how RELOCATABLE works
-# (exe-relative path resolution via lr_relocatable.c).
+# (exe-relative path resolution via lr_relocatable.c).  Both binaries'
+# rules are always defined; LUA_BIN above selects which one is built.
 
-ifeq ($(RELOCATABLE),1)
-
+# Patch lua.c: insert lr_set_relocatable_paths(L) after the openlibs call.
+# The regex matches the call site in both 5.4 (luaL_openlibs(L);) and 5.5
+# (luai_openlibs(L);) — the trailing ; is load-bearing, since it's what
+# excludes 5.5's #define luai_openlibs(L) ... line (inserting a statement at
+# file scope would be a syntax error).
 $(BUILD)/relocatable/lua.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/relocatable
-	awk '{print} /luaL_openlibs\(L\)/{print "  lr_set_relocatable_paths(L);"}' \
+	awk '{print} /lua[iL]_openlibs\(L\);/{print "  lr_set_relocatable_paths(L);"}' \
 	  $(LUA_SRC)/lua.c > $@
+	@grep -q 'lr_set_relocatable_paths' $@ || \
+	  { echo "ERROR: openlibs anchor not found in $(LUA_SRC)/lua.c"; rm -f $@; exit 1; }
 
 $(BUILD)/relocatable/lr_relocatable.o: src/lr_relocatable.c src/lr_relocatable.h $(LUA_DIR)
 	@mkdir -p $(BUILD)/relocatable
@@ -698,22 +801,18 @@ $(BUILD)/relocatable/lr_relocatable.o: src/lr_relocatable.c src/lr_relocatable.h
 	  -DLR_LUA_SHORT='"$(LUA_SHORT)"' \
 	  -c -o $@ $<
 
-$(LUA_BIN): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(LUA_SO)
+$(LUA_BIN_RELOC): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -Isrc \
 	  -include src/lr_relocatable.h \
 	  -DLR_LUA_SHORT='"$(LUA_SHORT)"' \
 	  -o $@ $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
-	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
+	  $(RPATH_FLAG)
 
-else
-
-$(LUA_BIN): $(LUA_SRC)/lua.c $(LUA_SO)
+$(LUA_BIN_PLAIN): $(LUA_SRC)/lua.c $(LUA_SO)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
 	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
-
-endif
 
 $(LUAC_BIN): $(LUA_SRC)/luac.c $(LUA_A)
 	$(CC) $(LUA_CFLAGS) -I$(LUA_SRC) -o $@ $< $(LUA_A) $(LDFLAGS_LUA)
@@ -730,7 +829,7 @@ liblua-shared: $(LUA_SO)
 # See the full Makefile for detailed design notes on:
 #   - Feature detection (header probes + function probes)
 #   - The colon-delimited format and ${pair%%:*} / ${pair#*:} parsing
-#   - The macOS _POSIX_TIMERS fixup
+#   - The macOS _POSIX_TIMERS fixup and LPOSIX_2001_COMPLIANT derivation
 #   - Why posix.o is excluded from libluaposix.a
 #   - The \044 octal escape technique for generated scripts
 
@@ -742,6 +841,9 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	@printf '/* Auto-generated by lua-regolith feature detection */\n' > $@
 	@# --- Header probes ---
 	@for pair in \
+	  'termios.h:HAVE_TERMIOS_H' \
+	  'sched.h:HAVE_SCHED_H' \
+	  'sys/msg.h:HAVE_SYS_MSG_H' \
 	  'sys/statvfs.h:HAVE_SYS_STATVFS_H' \
 	  'crypt.h:HAVE_CRYPT_H' \
 	  'net/if.h:HAVE_NET_IF_H' \
@@ -751,7 +853,7 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  hdr=$${pair%%:*}; macro=$${pair#*:}; \
 	  printf '#include <%s>\nint main(void){return 0;}\n' "$$hdr" \
 	    > $(BUILD)/_probe.c; \
-	  if $(CC) $(CFLAGS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
+	  if $(CC) $(CFLAGS) $(LUAPOSIX_PLAT_DEFS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
 	    printf '#define %s 1\n' "$$macro" >> $@; \
 	    echo "    $$macro = yes  ($$hdr)"; \
 	  else \
@@ -765,6 +867,16 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  'copy_file_range:HAVE_COPY_FILE_RANGE:unistd.h:copy_file_range(0,0,1,0,1,0)' \
 	  'posix_fadvise:HAVE_POSIX_FADVISE:fcntl.h:posix_fadvise(0,0,0,0)' \
 	  'fdatasync:HAVE_DECL_FDATASYNC:unistd.h:fdatasync(0)' \
+	  'fdatasync:HAVE_FDATASYNC:unistd.h:fdatasync(0)' \
+	  'gethostid:HAVE_GETHOSTID:unistd.h:gethostid()' \
+	  'msgrcv:HAVE_MSGRCV:sys/msg.h:msgrcv(0, (void *)0, 0, 0, 0)' \
+	  'msgsnd:HAVE_MSGSND:sys/msg.h:msgsnd(0, (void *)0, 0, 0)' \
+	  'sched_getscheduler:HAVE_SCHED_GETSCHEDULER:sched.h:sched_getscheduler(0)' \
+	  'sched_setscheduler:HAVE_SCHED_SETSCHEDULER:sched.h:struct sched_param p; sched_setscheduler(0, 0, &p)' \
+	  'tm_gmtoff:HAVE_TM_GMTOFF:time.h:struct tm t; t.tm_gmtoff = 0' \
+	  'tm_zone:HAVE_TM_ZONE:time.h:struct tm t; t.tm_zone = (char *)0' \
+	  'ws_xpixel:HAVE_WS_XPIXEL:sys/ioctl.h:struct winsize w; w.ws_xpixel = 0' \
+	  'ws_ypixel:HAVE_WS_YPIXEL:sys/ioctl.h:struct winsize w; w.ws_ypixel = 0' \
 	  'clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; clock_gettime(0, &ts)' \
 	; do \
 	  func=$${pair%%:*}; rest=$${pair#*:}; \
@@ -772,8 +884,8 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  hdr=$${rest%%:*}; body=$${rest#*:}; \
 	  printf '#include <%s>\nint main(void){%s;return 0;}\n' "$$hdr" "$$body" \
 	    > $(BUILD)/_probe.c; \
-	  if $(CC) $(CFLAGS) -o $(BUILD)/_probe $(BUILD)/_probe.c -lcrypt 2>/dev/null \
-	  || $(CC) $(CFLAGS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
+	  if $(CC) $(CFLAGS) $(LUAPOSIX_PLAT_DEFS) -o $(BUILD)/_probe $(BUILD)/_probe.c -lcrypt 2>/dev/null \
+	  || $(CC) $(CFLAGS) $(LUAPOSIX_PLAT_DEFS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
 	    printf '#define %s 1\n' "$$macro" >> $@; \
 	    echo "    $$macro = yes  ($$func)"; \
 	  else \
@@ -782,11 +894,22 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	done
 	@rm -f $(BUILD)/_probe.c $(BUILD)/_probe
 	@# --- macOS _POSIX_TIMERS fixup ---
+	@# See the full Makefile for the detailed explanation.
 	@printf '\n/* macOS _POSIX_TIMERS fixup */\n' >> $@
 	@printf '#include <unistd.h>\n' >> $@
 	@printf '#if defined(HAVE_CLOCK_GETTIME) && defined(_POSIX_TIMERS) && _POSIX_TIMERS == -1\n' >> $@
 	@printf '#undef _POSIX_TIMERS\n' >> $@
 	@printf '#define _POSIX_TIMERS 200809L\n' >> $@
+	@printf '#endif\n' >> $@
+	@# --- POSIX-2001 compliance flag ---
+	@# ctype.c, sched.c, sys/socket.c and parts of unistd.c are gated on
+	@# LPOSIX_2001_COMPLIANT (derived in ext/include/_helpers.c).  Derive it
+	@# here, after <unistd.h> above, so _POSIX_VERSION is always visible.
+	@printf '\n/* POSIX-2001 compliance (mirrors ext/include/_helpers.c) */\n' >> $@
+	@printf '#if !defined LPOSIX_2001_COMPLIANT\n' >> $@
+	@printf '#if _POSIX_C_SOURCE >= 200112L || _POSIX_VERSION >= 200112L || _XOPEN_SOURCE >= 600\n' >> $@
+	@printf '#define LPOSIX_2001_COMPLIANT 1\n' >> $@
+	@printf '#endif\n' >> $@
 	@printf '#endif\n' >> $@
 	@echo "  wrote $@"
 
@@ -797,9 +920,6 @@ LUAPOSIX_INC := -I$(CURDIR)/$(LUA_SRC) \
 	-include net/if.h \
 	$(LUAPOSIX_PLAT_DEFS) \
 	-DPACKAGE='"luaposix"' -DVERSION='"$(LUAPOSIX_VER)"'
-
-LUAPOSIX_SO_CMD = $(CC) $(SHARED_LINK) $(CFLAGS) $(SHARED_FLAGS) \
-	$(LUAPOSIX_INC) -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 $(BUILD)/luaposix-obj/.built-top: $(LUA_A) $(LUAPOSIX_DIR) $(LUAPOSIX_CONFIG_H)
 	@mkdir -p $(BUILD)/luaposix-obj
@@ -825,6 +945,8 @@ $(BUILD)/libluaposix.a: $(BUILD)/luaposix-obj/.built
 
 # Build .so modules via a generated helper script.
 # See full Makefile for detailed notes on the \044 escaping technique.
+# $(LCRYPT) is appended for the crypt(3)-using submodules; it's empty on
+# platforms where crypt lives in libc.
 $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@mkdir -p $(BUILD)/luaposix-so
 	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_build_posix_so.sh
@@ -834,7 +956,7 @@ $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@printf '  relpath=\044(echo "\044sym" | sed '"'"'s/^luaopen_//;s|_|/|g'"'"')\n' >> $(BUILD)/_build_posix_so.sh
 	@printf '  dir=\044(dirname "\044relpath")\n' >> $(BUILD)/_build_posix_so.sh
 	@printf '  mkdir -p "%s/luaposix-so/\044dir"\n' '$(BUILD)' >> $(BUILD)/_build_posix_so.sh
-	@printf '  %s %s -o "%s/luaposix-so/\044{relpath}.%s" "\044obj" -L%s -llua %s\n' '$(CC)' '$(SHARED_LINK)' '$(BUILD)' '$(LUA_MOD_EXT)' '$(BUILD)' '$(LDFLAGS_LUA)' >> $(BUILD)/_build_posix_so.sh
+	@printf '  %s %s -o "%s/luaposix-so/\044{relpath}.%s" "\044obj" -L%s -llua %s %s\n' '$(CC)' '$(SHARED_LINK)' '$(BUILD)' '$(LUA_MOD_EXT)' '$(BUILD)' '$(LDFLAGS_LUA)' '$(LCRYPT)' >> $(BUILD)/_build_posix_so.sh
 	@printf 'done\n' >> $(BUILD)/_build_posix_so.sh
 	@sh $(BUILD)/_build_posix_so.sh
 	@touch $@
@@ -864,7 +986,8 @@ luaposix: $(BUILD)/libluaposix.a $(BUILD)/luaposix-so/.built $(LUA_SO)
 #   + Faster builds (no cmake configure step)
 #   + Simpler to understand (just cc + ar)
 #   - libuv source file list must be maintained manually
-#   - Only supports platforms we've listed above (Linux, macOS, FreeBSD)
+#   - Only supports platforms we've listed above (Linux, macOS, FreeBSD,
+#     OpenBSD)
 #   - cmake's auto-detection of features/libraries is lost
 
 LIBUV_A   := $(BUILD)/libluv_libuv.a
@@ -1080,12 +1203,14 @@ dkjson: $(DKJSON_FILE)
 #   - The awk lua.c patching
 #   - The static link step and library ordering
 #
-# The only difference: the static binary link line includes
-# $(LIBUV_PLAT_LIBS) explicitly, because we don't have cmake to
-# figure out which platform libraries libuv needs.  In the full
-# Makefile, libuv is built by cmake (as part of luv), and cmake
-# embeds the platform library requirements in its build artifacts.
-# Here, we must pass them manually.
+# The only difference: the static binary link line uses
+# $(LIBUV_PLAT_LIBS) instead of the full Makefile's bare -lpthread,
+# because we don't have cmake to figure out which platform libraries
+# libuv needs.  In the full Makefile, libuv is built by cmake (as part
+# of luv), and cmake embeds the platform library requirements in its
+# build artifacts.  Here, we compiled libuv ourselves, so we must pass
+# them manually.  ($(LIBUV_PLAT_LIBS) always contains -lpthread, plus
+# -ldl/-lrt on Linux.)
 
 STATIC_LUA_BIN := $(BUILD)/lua-static
 STATIC_LUA_A   := $(BUILD)/static-lua.a
@@ -1124,11 +1249,17 @@ $(BUILD)/static-lua/lr_lua_module_data.h: $(LPEG_DIR) $(LUATERM_DIR) \
 	sh scripts/lua2c.sh $@ $(LUA_EMBED_ALL)
 
 # ---- Patch lua.c ------------------------------------------------------------
+#
+# Same [iL] regex + trailing-; anchor as the RELOCATABLE case above — matches
+# both 5.4's luaL_openlibs(L); and 5.5's luai_openlibs(L); call sites while
+# excluding 5.5's #define luai_openlibs(L) line.
 
 $(BUILD)/static-lua/lua_static.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua
-	awk '{print} /luaL_openlibs\(L\)/{print "  preload_bundled_modules(L);\n  preload_bundled_lua_modules(L);"}' \
+	awk '{print} /lua[iL]_openlibs\(L\);/{print "  preload_bundled_modules(L);\n  preload_bundled_lua_modules(L);"}' \
 	  $(LUA_SRC)/lua.c > $@
+	@grep -q 'preload_bundled_modules' $@ || \
+	  { echo "ERROR: openlibs anchor not found in $(LUA_SRC)/lua.c"; rm -f $@; exit 1; }
 
 # ---- Compile the preload modules -------------------------------------------
 
@@ -1148,42 +1279,8 @@ $(BUILD)/static-lua/lr_preload_lua.o: src/lr_preload_lua.c src/lr_preload_lua.h 
 # Link the static binary
 # ---------------------------------------------------------------------------
 #
-# This is the final link step that produces lua-static.  It combines:
-#   - The patched lua.c (with preload calls)
-#   - The preload .o files (C module registration + Lua module embedding)
-#   - liblua.a (the Lua runtime)
-#   - All C module static libraries
-#
-# -include src/lr_preload.h / -include src/lr_preload_lua.h
-#   Force-include the preload headers so the patched lua.c can call
-#   preload_bundled_modules() and preload_bundled_lua_modules() without
-#   modifying lua.c's #include directives.
-#
-# $(STATIC_EXTRA) expands to -static on Linux (truly static binary)
-# or empty on macOS (can't fully static-link on macOS).
-#
-# The order of .a files matters for the linker: libraries must come AFTER
-# the objects that reference them.  lua_static.c references liblua symbols,
-# and the preload modules reference both liblua and the C module symbols.
-#
-# `file $@` at the end prints the binary's type (ELF, Mach-O, static vs
-# dynamic) as a quick sanity check.
-#
-# The only thing NOT in the archive is lua_static.c itself (the patched
-# lua.c with the preload calls), since it contains main().
-#
-# -include headers are still needed so lua_static.c can call the preload
-# functions without modifying its #include directives.
-#
-# $(STATIC_EXTRA) expands to -static on Linux, empty on macOS.
-#
-# Note: $(LIBUV_PLAT_LIBS) appears here but NOT in the full Makefile's
-# equivalent link line.  In the full Makefile, cmake's build of luv
-# handles linking against platform libraries (pthreads, dl, kvm) internally.
-# Here, we compiled libuv ourselves, so we must explicitly link against
-# the platform libraries that libuv requires.  Without this, you'd get
-# undefined symbol errors for functions like pthread_create, dlopen (Linux),
-# or kvm_getprocs (FreeBSD).
+# See the full Makefile for the detailed explanation of this link step
+# (-include headers, $(STATIC_EXTRA), library ordering, `file $@`).
 
 $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c $(STATIC_LUA_A)
 	$(CC) $(LUA_CFLAGS) $(STATIC_EXTRA) -I$(LUA_SRC) -Isrc \
@@ -1192,8 +1289,7 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c $(STATIC_LUA_A)
 	  -o $@ \
 	  $(BUILD)/static-lua/lua_static.c \
 	  $(STATIC_LUA_A) \
-	  $(LIBUV_PLAT_LIBS) $(LDFLAGS_LUA)
-	  -lpthread $(LDFLAGS_LUA)
+	  $(LIBUV_PLAT_LIBS) $(LDFLAGS_LUA) $(LCRYPT)
 	@echo ""
 	@echo "Built static lua interpreter: $@"
 	@echo "  Bundled C modules: luaposix luv lfs lpeg lua-term"
@@ -1204,22 +1300,10 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c $(STATIC_LUA_A)
 # Build static-lua.a (fat archive for luastatic)
 # ---------------------------------------------------------------------------
 #
-# Merges all static libraries + the preload objects into a single archive. This
-# is the library counterpart of $(STATIC_LUA_BIN): it contains everything
-# EXCEPT lua.c's main(), so luastatic (or any other embedder) can link a Lua
-# script into a standalone binary with a single -l flag:
-#
-#   luastatic main.lua $(PREFIX)/lib/static-lua.a \
-#     -I$(PREFIX)/include -lpthread -lm -ldl
-#
-# The merge extracts each .a into its own subdirectory (to avoid filename
-# collisions — e.g. multiple archives may contain "init.o") then re-archives
-# everything.  Uses a generated script to avoid Make 3.81's $$ bug.
-#
-# NOTE: because this is an archive (not a relocatable object), consumers may
-# need --whole-archive / -force_load to pull in all symbols.  Prefer
-# static-lua.o for simplicity.  static-lua.a is provided for toolchains that
-# expect .a files.
+# Merges all static libraries + the preload objects into a single archive.
+# See the full Makefile for the design discussion (why extract-per-directory,
+# why .o files are copied directly for our own modules, the luaposix time.o
+# collision, and why static-lua.o is the preferred consumer interface).
 
 $(STATIC_LUA_A): $(BUILD)/static-lua/lr_preload.o \
                   $(BUILD)/static-lua/lr_preload_lua.o \
@@ -1233,7 +1317,7 @@ $(STATIC_LUA_A): $(BUILD)/static-lua/lr_preload.o \
 	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_merge_static_a.sh
 	@printf 'MERGEDIR="%s/static-lua/_merge_a"\n' '$(BUILD)' >> $(BUILD)/_merge_static_a.sh
 	@printf 'rm -rf "\044MERGEDIR"/*\n' >> $(BUILD)/_merge_static_a.sh
-	@printf '\n# --- cmake-built archives: extract (no internal name collisions) ---\n' >> $(BUILD)/_merge_static_a.sh
+	@printf '\n# --- separately-archived libs: extract (no internal name collisions) ---\n' >> $(BUILD)/_merge_static_a.sh
 	@printf 'for lib in %s %s; do\n' '$(BUILD)/libluv.a' '$(LIBUV_A)' >> $(BUILD)/_merge_static_a.sh
 	@printf '  name=\044(basename "\044lib" .a)\n' >> $(BUILD)/_merge_static_a.sh
 	@printf '  mkdir -p "\044MERGEDIR/\044name"\n' >> $(BUILD)/_merge_static_a.sh
@@ -1267,41 +1351,12 @@ $(STATIC_LUA_A): $(BUILD)/static-lua/lr_preload.o \
 # Build static-lua.o (single relocatable object for luastatic / embedding)
 # ---------------------------------------------------------------------------
 #
-# `ld -r` (also called "partial linking" or "incremental linking") combines
-# multiple .o files into a single .o without resolving external symbols. The
-# result is a plain object file — not an archive — so any linker will include
-# it unconditionally.  No --whole-archive or -force_load needed.
-#
-# This is the public interface for luastatic and other static-binary
-# producers:
-#
-#   luastatic main.lua $(PREFIX)/lib/static-lua.o \
-#     -I$(PREFIX)/include -lpthread -lm -ldl
-#
-# Contents: liblua + luaposix + luv + libuv + lfs + lpeg + lua-term
-#           + lr_preload.o (C module registration)
-#           + lr_preload_lua.o (embedded Lua modules)
-#
-# The merge extracts each .a into its own subdirectory (to avoid filename
-# collisions — e.g. multiple archives contain identically-named .o files), then
-# combines everything with ld -r.  Uses a generated script to stay safe from
-# Make 3.81's $$ escaping bug.
-#
-# `ld -r` (partial linking) combines multiple .o files into a single .o without
-# resolving external symbols.  The result is a plain object file — not an
-# archive — so any linker includes it unconditionally.  No
-# --whole-archive or -force_load needed.
-#
-# IMPORTANT: we use the build-tree .o files directly for our own modules rather
-# than extracting from .a archives.  This avoids a subtle bug: luaposix has
-# both ext/posix/time.c and ext/posix/sys/time.c, which produce
-# identically-named time.o members in libluaposix.a.  The archive stores both
-# (ar allows duplicate member names), but `ar x` extracts both to the same
-# filename — the second silently overwrites the first, losing one module's
-# symbols.
-#
-# For cmake-built archives (libluv.a, libuv.a) where we don't control the .o
-# file layout, we still extract — these don't have internal name collisions.
+# `ld -r` (partial linking) combines multiple .o files into a single .o
+# without resolving external symbols.  The result is a plain object file —
+# not an archive — so any linker includes it unconditionally.  No
+# --whole-archive or -force_load needed.  See the full Makefile for the
+# complete design notes (including the luaposix time.o / sys/time.o
+# collision that forces the copy-directly approach).
 #
 # Usage with luastatic:
 #
@@ -1320,7 +1375,7 @@ $(STATIC_LUA_O): $(BUILD)/static-lua/lr_preload.o \
 	@printf '#!/bin/sh\nset -e\n' > $(BUILD)/_merge_static.sh
 	@printf 'MERGEDIR="%s/static-lua/_merge"\n' '$(BUILD)' >> $(BUILD)/_merge_static.sh
 	@printf 'rm -rf "\044MERGEDIR"/*\n' >> $(BUILD)/_merge_static.sh
-	@printf '\n# --- cmake-built archives: extract (no internal name collisions) ---\n' >> $(BUILD)/_merge_static.sh
+	@printf '\n# --- separately-archived libs: extract (no internal name collisions) ---\n' >> $(BUILD)/_merge_static.sh
 	@printf 'for lib in %s %s; do\n' '$(BUILD)/libluv.a' '$(LIBUV_A)' >> $(BUILD)/_merge_static.sh
 	@printf '  name=\044(basename "\044lib" .a)\n' >> $(BUILD)/_merge_static.sh
 	@printf '  mkdir -p "\044MERGEDIR/\044name"\n' >> $(BUILD)/_merge_static.sh
@@ -1366,10 +1421,19 @@ static-lua: $(STATIC_LUA_BIN) $(STATIC_LUA_A) $(STATIC_LUA_O)
 # Identical to the full Makefile.  See there for explanations of:
 #   - TEST_LUA (the environment variable prefix for test runs)
 #   - The ;; path suffix convention
+#   - Why LD_LIBRARY_PATH / DYLD_LIBRARY_PATH point at the build tree
+#     (so the luaposix .so modules can resolve liblua before install)
 #   - The define/endef multi-line variable for the inline test script
 #   - The quicktest vs test distinction
-TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
+
+# posix.version for the build-tree test environment (luke normally generates it)
+$(BUILD)/lua-modules/posix/version.lua: $(LUAPOSIX_DIR)
+	@mkdir -p $(BUILD)/lua-modules/posix
+	@echo 'return "luaposix $(LUAPOSIX_VER)"' > $@
+
+TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;$(LUAPOSIX_DIR)/lib/?.lua;$(LUAPOSIX_DIR)/lib/?/init.lua;;" \
            LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);;" \
+           LD_LIBRARY_PATH="$(BUILD)" DYLD_LIBRARY_PATH="$(BUILD)" \
            $(LUA_BIN)
 
 TEST_DEPS = $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
@@ -1532,6 +1596,10 @@ test: $(TEST_DEPS)
 #   - The posix.version generation
 #   - The versioned liblua symlink
 #   - The pkg-config $${prefix} escaping
+#
+# One lite-specific deviation: the pkg-config Libs: line uses
+# $(LDFLAGS_LUA) instead of hardcoded "-lm -ldl", because -ldl does not
+# exist on OpenBSD (dlopen is in libc).  On Linux the output is identical.
 
 .PHONY: install-lua install-luaposix install-luv install-lfs install-lpeg \
         install-luaterm install-dkjson install-pkgconfig
@@ -1619,7 +1687,7 @@ install-pkgconfig:
 	  echo 'Name: lua-regolith $(LUA_SHORT)'; \
 	  echo 'Description: lua-regolith — Lua $(LUA_SHORT) with bundled luaposix, luv, lfs, lpeg, lua-term, dkjson'; \
 	  echo 'Version: $(LUA_VER)'; \
-	  echo 'Libs: -L$${libdir} -llua -lm -ldl'; \
+	  echo 'Libs: -L$${libdir} -llua $(LDFLAGS_LUA)'; \
 	  echo 'Libs.private: -lpthread'; \
 	  echo 'Cflags: -I$${includedir}'; \
 	} > $(PREFIX)/lib/pkgconfig/lua$(LUA_SHORT).pc
