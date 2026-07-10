@@ -351,7 +351,7 @@ endif
 # that look like missing functions but are actually missing macros.
 
 ifeq ($(UNAME_S),Darwin)
-  LUAPOSIX_PLAT_DEFS := -D_DARWIN_C_SOURCE
+  LUAPOSIX_PLAT_DEFS := -D_DARWIN_C_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
 else ifeq ($(UNAME_S),Linux)
   LUAPOSIX_PLAT_DEFS := -D_BSD_SOURCE -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
 else ifeq ($(UNAME_S),FreeBSD)
@@ -845,11 +845,17 @@ ifeq ($(RELOCATABLE),1)
 #
 # awk '{print} /pattern/{print "extra"}' prints every line, and additionally
 # prints "extra" after any line matching the pattern.  This inserts the
-# function call right after the luaL_openlibs(L) line.
+# function call right after the luaL_openlibs(L) line. The regex below matches
+# the call site in both 5.4 (luaL_openlibs(L);) and 5.5 (luai_openlibs(L);) —
+# the trailing ; is load-bearing, since it's what excludes 5.5's #define
+# luai_openlibs(L) ... line (inserting a statement at file scope would be a
+# syntax error)
 $(BUILD)/relocatable/lua.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/relocatable
-	awk '{print} /luaL_openlibs\(L\)/{print "  lr_set_relocatable_paths(L);"}' \
+	awk '{print} /lua[iL]_openlibs\(L\);/{print "  lr_set_relocatable_paths(L);"}' \
 	  $(LUA_SRC)/lua.c > $@
+	@grep -q 'lr_set_relocatable_paths' $@ || \
+	  { echo "ERROR: openlibs anchor not found in $(LUA_SRC)/lua.c"; rm -f $@; exit 1; }
 
 # Compile the relocatable path-resolution module
 #
@@ -1063,6 +1069,16 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	@printf '#if defined(HAVE_CLOCK_GETTIME) && defined(_POSIX_TIMERS) && _POSIX_TIMERS == -1\n' >> $@
 	@printf '#undef _POSIX_TIMERS\n' >> $@
 	@printf '#define _POSIX_TIMERS 200809L\n' >> $@
+	@printf '#endif\n' >> $@
+	@# --- POSIX-2001 compliance flag ---
+	@# ctype.c, sched.c, sys/socket.c and parts of unistd.c are gated on
+	@# LPOSIX_2001_COMPLIANT (derived in ext/include/_helpers.c).  Derive it
+	@# here, after <unistd.h> above, so _POSIX_VERSION is always visible.
+	@printf '\n/* POSIX-2001 compliance (mirrors ext/include/_helpers.c) */\n' >> $@
+	@printf '#if !defined LPOSIX_2001_COMPLIANT\n' >> $@
+	@printf '#if _POSIX_C_SOURCE >= 200112L || _POSIX_VERSION >= 200112L || _XOPEN_SOURCE >= 600\n' >> $@
+	@printf '#define LPOSIX_2001_COMPLIANT 1\n' >> $@
+	@printf '#endif\n' >> $@
 	@printf '#endif\n' >> $@
 	@echo "  wrote $@"
 
@@ -1541,11 +1557,17 @@ $(BUILD)/static-lua/lr_lua_module_data.h: $(LPEG_DIR) $(LUATERM_DIR) \
 # luaL_openlibs(L).  Here we insert TWO calls:
 #   preload_bundled_modules(L)      — registers C module luaopen_* functions
 #   preload_bundled_lua_modules(L)  — registers embedded Lua modules
+# The regex below matches the call site in both 5.4 (luaL_openlibs(L);) and 5.5
+# (luai_openlibs(L);) — the trailing ; is load-bearing, since it's what
+# excludes 5.5's #define luai_openlibs(L) ... line (inserting a statement at
+# file scope would be a syntax error).
 
 $(BUILD)/static-lua/lua_static.c: $(BUILD)/.lua-patched
 	@mkdir -p $(BUILD)/static-lua
-	awk '{print} /luaL_openlibs\(L\)/{print "  preload_bundled_modules(L);\n  preload_bundled_lua_modules(L);"}' \
+	awk '{print} /lua[iL]_openlibs\(L\);/{print "  preload_bundled_modules(L);\n  preload_bundled_lua_modules(L);"}' \
 	  $(LUA_SRC)/lua.c > $@
+	@grep -q 'preload_bundled_modules' $@ || \
+	  { echo "ERROR: openlibs anchor not found in $(LUA_SRC)/lua.c"; rm -f $@; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Compile the preload modules

@@ -862,38 +862,17 @@ print("--- posix.ctype ---")
 
 local ctype = require("posix.ctype")
 
-if ctype.isalpha then
-   test("isalpha('A')", function()
-      assert(ctype.isalpha("A") ~= 0)
-   end)
-   test("isalpha('1') == 0", function()
-      assert(ctype.isalpha("1") == 0)
-   end)
-end
-
-if ctype.isdigit then
-   test("isdigit('5')", function()
-      assert(ctype.isdigit("5") ~= 0)
-   end)
-end
-
-if ctype.isspace then
-   test("isspace(' ')", function()
-      assert(ctype.isspace(" ") ~= 0)
-   end)
-end
-
-if ctype.isupper then
-   test("isupper('A')", function()
-      assert(ctype.isupper("A") ~= 0)
-   end)
-end
-
-if ctype.islower then
-   test("islower('a')", function()
-      assert(ctype.islower("a") ~= 0)
-   end)
-end
+test("ctype has its full API (isgraph + isprint)", function()
+   is_func(ctype.isgraph)
+   is_func(ctype.isprint)
+end)
+test("isgraph('A') ~= 0, isgraph(' ') == 0", function()
+   assert(ctype.isgraph("A") ~= 0)
+   assert(ctype.isgraph(" ") == 0)
+end)
+test("isprint(' ') ~= 0", function()
+   assert(ctype.isprint(" ") ~= 0)
+end)
 
 -- ============================================================================
 -- 28. luaposix — posix.sched (optional — mostly Linux)
@@ -901,21 +880,18 @@ end
 
 print("")
 print("--- posix.sched ---")
-
 local ok_sched, sched = pcall(require, "posix.sched")
-if ok_sched then
-   if sched.sched_getscheduler then
-      test("sched_getscheduler (exists)", function()
-         is_func(sched.sched_getscheduler)
-      end)
-   end
-   if sched.sched_setscheduler then
-      test("sched_setscheduler (exists)", function()
-         is_func(sched.sched_setscheduler)
-      end)
-   end
+local sysname = require("posix.sys.utsname").uname().sysname
+
+if ok_sched and sched.sched_getscheduler then
+   test("sched_getscheduler (exists)", function() is_func(sched.sched_getscheduler) end)
+   test("sched_setscheduler (exists)", function() is_func(sched.sched_setscheduler) end)
+elseif sysname == "Linux" then
+   test("posix.sched populated on Linux", function()
+      error("sched empty on Linux — probe or compliance-flag regression")
+   end)
 else
-   print("  SKIP  posix.sched (not available on this platform)")
+   print("  SKIP  posix.sched (no process-scheduling API on " .. sysname .. ")")
    skip = skip + 1
 end
 
