@@ -60,7 +60,7 @@
 
 SHELL := /bin/sh
 .SUFFIXES:
-MAKEFLAGS += --no-builtin-rules
+MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 
 # =============================================================================
 # USER-CONFIGURABLE KNOBS
@@ -241,7 +241,10 @@ BUILD         := $(CURDIR)/build
 # and shared (.so) libraries.
 
 CFLAGS        ?= -O2 -Wall
-LUA_CFLAGS    := $(CFLAGS) -DLUA_USE_POSIX -DLUA_USE_DLOPEN
+# LUA_SYS_DEFS is assigned per-platform below (recursive `=` picks it up).
+# LUA_USE_LINUX/LUA_USE_MACOSX expand to POSIX+DLOPEN on Lua <= 5.4, and on
+# 5.5 additionally set LUA_READLINELIB so lua.c dlopen()s readline at runtime.
+LUA_CFLAGS    = $(CFLAGS) $(LUA_SYS_DEFS)
 SHARED_FLAGS  := -fPIC
 
 # =============================================================================
@@ -275,6 +278,7 @@ SHARED_FLAGS  := -fPIC
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
+  LUA_SYS_DEFS        := -DLUA_USE_MACOSX
   SHARED_EXT          := dylib
   SHARED_LINK         := -dynamiclib
   # -install_name tells dyld HOW to reference this dylib when another
@@ -283,17 +287,25 @@ ifeq ($(UNAME_S),Darwin)
   # Without this, macOS defaults to the literal build-time output path,
   # which breaks on any other machine (or even a different directory).
   SHARED_INSTALL_NAME := -install_name @rpath/liblua.$(SHARED_EXT)
+  SHARED_SONAME       :=
   LDFLAGS_LUA         := -lm
   STATIC_EXTRA        :=
   NM_LUAOPEN_RE       := luaopen_
 else
+  LUA_SYS_DEFS        := -DLUA_USE_LINUX
   SHARED_EXT          := so
   SHARED_LINK         := -shared
   SHARED_INSTALL_NAME :=
-  LDFLAGS_LUA         := -lm -ldl -lreadline -lcrypt
+  SHARED_SONAME       := -Wl,-soname,liblua.so
+  LDFLAGS_LUA         := -lm -ldl
   STATIC_EXTRA        := -static
   NM_LUAOPEN_RE       := luaopen_
 endif
+
+# Separate libcrypt only exists on some systems (glibc via libxcrypt; macOS
+# has crypt() in libSystem).  Detect once; empty when absent.  Only the
+# luaposix .so links and the static binary need it.
+LCRYPT := $(shell printf 'int main(void){return 0;}\n' | $(CC) -x c - -lcrypt -o /dev/null 2>/dev/null && echo -lcrypt)
 
 # ---------------------------------------------------------------------------
 # RPATH_FLAG — how the binary finds liblua.so/.dylib at runtime
@@ -378,7 +390,7 @@ LUA_MOD_EXT := so
 # graph: each module depends on $(LUA_A) or $(LUA_SO), so Lua is always built
 # first regardless of the order listed here.
 
-.PHONY: all install clean distclean download verify test static-lua
+.PHONY: all install clean distclean download verify test static-lua dkjson relocate
 
 all: lua liblua-shared luaposix luv lfs lpeg luaterm dkjson
 
@@ -692,10 +704,24 @@ LUAC_BIN  := $(BUILD)/luac
 # The \ at the end of lines continues a single shell command across multiple
 # lines.  The entire if/fi block runs as one shell invocation.
 
-$(BUILD)/.lua-patched: $(LUA_DIR)
+# Content-stamp: touched only when PREFIX actually changes, so a PREFIX
+# change automatically invalidates .lua-patched and the lua core rebuild.
+$(BUILD)/.prefix: FORCE
 	@mkdir -p $(BUILD)
-	@if ! grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
-	  { \
+	@echo '$(PREFIX)' | cmp -s - $@ || echo '$(PREFIX)' > $@
+
+.PHONY: FORCE
+FORCE:
+
+$(BUILD)/.lua-patched: $(LUA_DIR) $(BUILD)/.prefix
+	@mkdir -p $(BUILD)
+	@# Strip any stale override block, then append fresh (idempotent).
+	@if grep -q 'BUNDLED_LUA_PREFIX_OVERRIDE' $(LUA_SRC)/luaconf.h; then \
+	  sed '/\/\* ---- BUNDLED_LUA_PREFIX_OVERRIDE ----/,/\/\* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ----/d' \
+	    $(LUA_SRC)/luaconf.h > $(LUA_SRC)/luaconf.h.new; \
+	  mv $(LUA_SRC)/luaconf.h.new $(LUA_SRC)/luaconf.h; \
+	fi
+	@{ \
 	    echo ''; \
 	    echo '/* ---- BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
 	    echo '/* Appended by lua-regolith Makefile. */'; \
@@ -726,8 +752,7 @@ $(BUILD)/.lua-patched: $(LUA_DIR)
 	    echo '#define LUA_CPATH_DEFAULT LUA_CDIR"?.$(LUA_MOD_EXT);"LUA_CDIR"loadall.$(LUA_MOD_EXT);""./?.$(LUA_MOD_EXT)"'; \
 	    echo ''; \
 	    echo '/* ---- end BUNDLED_LUA_PREFIX_OVERRIDE ---- */'; \
-	  } >> $(LUA_SRC)/luaconf.h; \
-	fi
+	} >> $(LUA_SRC)/luaconf.h
 	touch $@
 
 # ---------------------------------------------------------------------------
@@ -783,7 +808,7 @@ $(LUA_A): $(BUILD)/lua-obj/.built
 # runtime in every module.
 
 $(LUA_SO): $(BUILD)/lua-obj/.built
-	$(CC) $(SHARED_LINK) $(SHARED_INSTALL_NAME) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
+	$(CC) $(SHARED_LINK) $(SHARED_INSTALL_NAME) $(SHARED_SONAME) -o $@ $(BUILD)/lua-obj/*.o $(LDFLAGS_LUA)
 
 # ---------------------------------------------------------------------------
 # Relocatable support (RELOCATABLE=1)
@@ -853,7 +878,7 @@ $(LUA_BIN): $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o $(L
 	  -DLR_LUA_SHORT='"$(LUA_SHORT)"' \
 	  -o $@ $(BUILD)/relocatable/lua.c $(BUILD)/relocatable/lr_relocatable.o \
 	  -L$(BUILD) -llua $(LDFLAGS_LUA) \
-	  -Wl,-rpath,$(BUILD) $(RPATH_FLAG)
+	  $(RPATH_FLAG)
 
 else
 
@@ -975,6 +1000,9 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	@# (the semicolon-backslash at the end continues the for loop body
 	@# across multiple Make recipe lines, which are joined into one shell).
 	@for pair in \
+	  'termios.h:HAVE_TERMIOS_H' \
+	  'sched.h:HAVE_SCHED_H' \
+	  'sys/msg.h:HAVE_SYS_MSG_H' \
 	  'sys/statvfs.h:HAVE_SYS_STATVFS_H' \
 	  'crypt.h:HAVE_CRYPT_H' \
 	  'net/if.h:HAVE_NET_IF_H' \
@@ -984,7 +1012,7 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  hdr=$${pair%%:*}; macro=$${pair#*:}; \
 	  printf '#include <%s>\nint main(void){return 0;}\n' "$$hdr" \
 	    > $(BUILD)/_probe.c; \
-	  if $(CC) $(CFLAGS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
+	  if $(CC) $(CFLAGS) $(LUAPOSIX_PLAT_DEFS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
 	    printf '#define %s 1\n' "$$macro" >> $@; \
 	    echo "    $$macro = yes  ($$hdr)"; \
 	  else \
@@ -1002,6 +1030,16 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  'copy_file_range:HAVE_COPY_FILE_RANGE:unistd.h:copy_file_range(0,0,1,0,1,0)' \
 	  'posix_fadvise:HAVE_POSIX_FADVISE:fcntl.h:posix_fadvise(0,0,0,0)' \
 	  'fdatasync:HAVE_DECL_FDATASYNC:unistd.h:fdatasync(0)' \
+	  'fdatasync:HAVE_FDATASYNC:unistd.h:fdatasync(0)' \
+	  'gethostid:HAVE_GETHOSTID:unistd.h:gethostid()' \
+	  'msgrcv:HAVE_MSGRCV:sys/msg.h:msgrcv(0, (void *)0, 0, 0, 0)' \
+	  'msgsnd:HAVE_MSGSND:sys/msg.h:msgsnd(0, (void *)0, 0, 0)' \
+	  'sched_getscheduler:HAVE_SCHED_GETSCHEDULER:sched.h:sched_getscheduler(0)' \
+	  'sched_setscheduler:HAVE_SCHED_SETSCHEDULER:sched.h:struct sched_param p; sched_setscheduler(0, 0, &p)' \
+	  'tm_gmtoff:HAVE_TM_GMTOFF:time.h:struct tm t; t.tm_gmtoff = 0' \
+	  'tm_zone:HAVE_TM_ZONE:time.h:struct tm t; t.tm_zone = (char *)0' \
+	  'ws_xpixel:HAVE_WS_XPIXEL:sys/ioctl.h:struct winsize w; w.ws_xpixel = 0' \
+	  'ws_ypixel:HAVE_WS_YPIXEL:sys/ioctl.h:struct winsize w; w.ws_ypixel = 0' \
 	  'clock_gettime:HAVE_CLOCK_GETTIME:time.h:struct timespec ts; clock_gettime(0, &ts)' \
 	; do \
 	  func=$${pair%%:*}; rest=$${pair#*:}; \
@@ -1009,8 +1047,8 @@ $(LUAPOSIX_CONFIG_H): $(LUA_DIR)
 	  hdr=$${rest%%:*}; body=$${rest#*:}; \
 	  printf '#include <%s>\nint main(void){%s;return 0;}\n' "$$hdr" "$$body" \
 	    > $(BUILD)/_probe.c; \
-	  if $(CC) $(CFLAGS) -o $(BUILD)/_probe $(BUILD)/_probe.c -lcrypt 2>/dev/null \
-	  || $(CC) $(CFLAGS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
+	  if $(CC) $(CFLAGS) $(LUAPOSIX_PLAT_DEFS) -o $(BUILD)/_probe $(BUILD)/_probe.c -lcrypt 2>/dev/null \
+	  || $(CC) $(CFLAGS) $(LUAPOSIX_PLAT_DEFS) -o $(BUILD)/_probe $(BUILD)/_probe.c 2>/dev/null; then \
 	    printf '#define %s 1\n' "$$macro" >> $@; \
 	    echo "    $$macro = yes  ($$func)"; \
 	  else \
@@ -1057,12 +1095,6 @@ LUAPOSIX_INC := -I$(CURDIR)/$(LUA_SRC) \
 	-include net/if.h \
 	$(LUAPOSIX_PLAT_DEFS) \
 	-DPACKAGE='"luaposix"' -DVERSION='"$(LUAPOSIX_VER)"'
-
-# Shorthand for the full command to compile a luaposix .so from source. This is
-# a recursively-expanded variable (= not :=) so that it picks up any changes to
-# its component variables if they're overridden later.
-LUAPOSIX_SO_CMD = $(CC) $(SHARED_LINK) $(CFLAGS) $(SHARED_FLAGS) \
-	$(LUAPOSIX_INC) -L$(BUILD) -llua $(LDFLAGS_LUA)
 
 # Compile top-level C files (ext/posix/*.c) and sub-directory files
 # (ext/posix/sys/*.c) separately, into the same build tree. Uses the cd+glob
@@ -1167,7 +1199,7 @@ $(BUILD)/luaposix-so/.built: $(BUILD)/luaposix-obj/.built
 	@printf '  relpath=\044(echo "\044sym" | sed '"'"'s/^luaopen_//;s|_|/|g'"'"')\n' >> $(BUILD)/_build_posix_so.sh
 	@printf '  dir=\044(dirname "\044relpath")\n' >> $(BUILD)/_build_posix_so.sh
 	@printf '  mkdir -p "%s/luaposix-so/\044dir"\n' '$(BUILD)' >> $(BUILD)/_build_posix_so.sh
-	@printf '  %s %s -o "%s/luaposix-so/\044{relpath}.%s" "\044obj" -L%s -llua %s\n' '$(CC)' '$(SHARED_LINK)' '$(BUILD)' '$(LUA_MOD_EXT)' '$(BUILD)' '$(LDFLAGS_LUA)' >> $(BUILD)/_build_posix_so.sh
+	@printf '  %s %s -o "%s/luaposix-so/\044{relpath}.%s" "\044obj" -L%s -llua %s %s\n' '$(CC)' '$(SHARED_LINK)' '$(BUILD)' '$(LUA_MOD_EXT)' '$(BUILD)' '$(LDFLAGS_LUA)' '$(LCRYPT)' >> $(BUILD)/_build_posix_so.sh
 	@printf 'done\n' >> $(BUILD)/_build_posix_so.sh
 	@sh $(BUILD)/_build_posix_so.sh
 	@touch $@
@@ -1576,7 +1608,7 @@ $(STATIC_LUA_BIN): $(BUILD)/static-lua/lua_static.c $(STATIC_LUA_A)
 	  -o $@ \
 	  $(BUILD)/static-lua/lua_static.c \
 	  $(STATIC_LUA_A) \
-	  -lpthread $(LDFLAGS_LUA)
+	  -lpthread $(LDFLAGS_LUA) $(LCRYPT)
 	@echo ""
 	@echo "Built static lua interpreter: $@"
 	@echo "  Bundled C modules: luaposix luv lfs lpeg lua-term"
@@ -1762,8 +1794,14 @@ static-lua: $(STATIC_LUA_BIN) $(STATIC_LUA_A) $(STATIC_LUA_O)
 # LUA_CPATH: the complex path handles luaposix's nested .so layout
 #   (posix/unistd.so, posix/sys/stat.so) plus flat modules (luv.so,
 #   lfs.so, lpeg.so) and lua-term's oddly-named term_core.so.
-TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;;" \
+# posix.version for the build-tree test environment (luke normally generates it)
+$(BUILD)/lua-modules/posix/version.lua: $(LUAPOSIX_DIR)
+	@mkdir -p $(BUILD)/lua-modules/posix
+	@echo 'return "luaposix $(LUAPOSIX_VER)"' > $@
+
+TEST_LUA = LUA_PATH="$(BUILD)/lua-modules/?.lua;$(LUAPOSIX_DIR)/lib/?.lua;$(LUAPOSIX_DIR)/lib/?/init.lua;;" \
            LUA_CPATH="$(BUILD)/luaposix-so/?.$(LUA_MOD_EXT);$(BUILD)/luaposix-so/?/init.$(LUA_MOD_EXT);$(BUILD)/?.$(LUA_MOD_EXT);;" \
+           LD_LIBRARY_PATH="$(BUILD)" DYLD_LIBRARY_PATH="$(BUILD)" \
            $(LUA_BIN)
 
 TEST_DEPS = $(LUA_BIN) $(BUILD)/luaposix-so/.built $(BUILD)/luv.$(LUA_MOD_EXT) \
