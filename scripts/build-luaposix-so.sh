@@ -58,6 +58,6 @@ find "$objdir" -name '*.o' | while read -r obj; do
     # link this one object into a shared module at the derived path. All four
     # variables come from the make recipe's environment
     mkdir -p "$outdir/$(dirname "$relpath")"
-    # shellcheck disable=SC2086  -- SHARED_LINK and LINK_LIBS must word-split
+    # shellcheck disable=SC2086 # SHARED_LINK and LINK_LIBS must word-split
     $CC $SHARED_LINK -o "$outdir/$relpath.$LUA_MOD_EXT" "$obj" $LINK_LIBS
 done

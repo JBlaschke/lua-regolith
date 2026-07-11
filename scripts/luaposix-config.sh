@@ -52,7 +52,7 @@ probe_compiles() {
     # saying no. When that happens, delete the redirections temporarily and the
     # real error surfaces.
     #
-    # shellcheck disable=SC2086  -- CFLAGS must word-split
+    # shellcheck disable=SC2086   # CFLAGS must word-split
     $CC $CFLAGS -o "$workdir/probe" "$workdir/probe.c" -lcrypt 2>/dev/null \
       || $CC $CFLAGS -o "$workdir/probe" "$workdir/probe.c" 2>/dev/null
 }

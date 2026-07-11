@@ -24,6 +24,6 @@ for f in "$@"; do
     #   end-of-string so a .c appearing mid-path could never be touched.
     #   Result: src_unix_core.o.
     obj=$(echo "$f" | sed 's|/|_|g;s|\.c$|.o|')
-    # shellcheck disable=SC2086  -- CFLAGS must word-split
+    # shellcheck disable=SC2086   # CFLAGS must word-split
     $CC $CFLAGS -c -o "$objdir/$obj" "$srcroot/$f"
 done

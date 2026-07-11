@@ -109,7 +109,7 @@ case $mode in
         # per-platform incantations. That's why static-lua.o is the documented
         # preferred interface and the .a exists for toolchains that insist on
         # archives.
-        find "$mergedir" -name '*.o' | sort | xargs $AR rcs "$output"
+        find "$mergedir" -name '*.o' | sort | xargs "$AR" rcs "$output"
         $RANLIB "$output"
         ;;
     object)

@@ -142,6 +142,7 @@ for pair in "$@"; do
     # This is needed because C identifiers can't contain dots.
     # The result is used as:  static const unsigned char mod_posix_sys_stat[]
 
+    # shellcheck disable=SC2001   # Tolerate sed in same cases
     cname=$(echo "$name" | sed 's/\./_/g')
 
     # Skip missing files with a warning (don't fail the whole build)
@@ -150,6 +151,7 @@ for pair in "$@"; do
         continue
     fi
 
+    # shellcheck disable=SC2129
     printf 'static const unsigned char mod_%s[] = {\n' "$cname" >> "$outfile"
 
     # ---- Convert .lua file to C hex bytes ------------------------------------
@@ -255,6 +257,7 @@ printf 'static const struct lr_lua_module lua_modules[] = {\n' >> "$outfile"
 for pair in "$@"; do
     name="${pair%%:*}"
     file="${pair#*:}"
+    # shellcheck disable=SC2001   # Tolerate sed in same cases
     cname=$(echo "$name" | sed 's/\./_/g')
 
     # Skip files that were missing in pass 1 (keeps the two passes consistent)
