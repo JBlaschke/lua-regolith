@@ -6,7 +6,7 @@ Like the [regolith](https://en.wikipedia.org/wiki/Regolith) that blankets
 the Moon's surface, this project is the loose but essential layer everything
 else sits on.
 
-lua-regolith builds a self-contained, relocatable Lua 5.4 installation —
+lua-regolith builds a self-contained, relocatable Lua installation —
 no system packages required. Use it to:
 
 - **Run [Lmod](https://github.com/TACC/Lmod)** on HPC clusters, containers,
@@ -34,26 +34,6 @@ embed them in your own C/C++ application.
 
 ---
 
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [For Lmod Users](#for-lmod-users)
-- [For Developers](#for-developers)
-  - [Install Layout](#install-layout)
-  - [Using with luastatic](#using-with-luastatic)
-  - [Fully Static Interpreter](#fully-static-interpreter)
-- [Bundled Modules](#bundled-modules)
-- [Build Guide](#build-guide)
-  - [Requirements](#requirements)
-  - [Makefile vs Makefile.lite](#makefile-vs-makefilelite)
-  - [Configuration Variables](#configuration-variables)
-  - [Smoke Tests](#smoke-tests)
-- [Version Resilience](#version-resilience)
-- [License](#license)
-- [Contributing](#contributing)
-
----
-
 ## Quick Start
 
 ```bash
@@ -61,17 +41,16 @@ git clone https://github.com/JBlaschke/lua-regolith.git
 cd lua-regolith
 
 make download
+make verify
 make PREFIX=/opt/lua-regolith all
+make PREFIX=/opt/lua-regolith static-lua
 make PREFIX=/opt/lua-regolith test
 make PREFIX=/opt/lua-regolith install
 ```
 
-This downloads all sources, builds everything, runs the test suite, and
-installs to `PREFIX`. See [Build Guide](#build-guide) for requirements and
-options.
-
-> **No cmake?** Use `make -f Makefile.lite` instead — it needs only `cc`,
-> `make`, and `wget`. See [Makefile vs Makefile.lite](#makefile-vs-makefilelite).
+> **No cmake?** Substitute `make -f Makefile.lite` throughout — it needs
+> only `cc`, GNU make, and `wget`. See
+> [Repository Layout & Build Internals](#repository-layout--build-internals).
 
 ---
 
@@ -88,11 +67,9 @@ cd Lmod
 make install
 ```
 
-Lmod's configure will detect luaposix, lfs, lpeg, dkjson, and lua-term
-from the bundled interpreter's hardcoded package paths. No `LUA_PATH` or
-`LUA_CPATH` environment variables needed.
-
-To activate:
+Lmod's configure detects luaposix, lfs, lpeg, dkjson, and lua-term from the
+bundled interpreter's hardcoded package paths. No environment variables
+needed. To activate:
 
 ```bash
 source /opt/lmod/lmod/lmod/init/bash   # or .csh, .zsh, .fish
@@ -101,12 +78,12 @@ module avail
 
 **Things to know:**
 
-- Lmod hardcodes `LUA_PATH`/`LUA_CPATH` at configure time to protect itself
-  from user environment changes. Your lua-regolith prefix must be **final**
-  before you `./configure` Lmod.
+- Lmod hardcodes `LUA_PATH`/`LUA_CPATH` at configure time. Your
+  lua-regolith prefix must be **final** before you `./configure` Lmod
+  (or use `RELOCATABLE=1`, or re-run `make relocate PREFIX=...`).
 - **luafilesystem** is a hard Lmod requirement. Without it, spider cache
   generation and many internal operations fail immediately.
-- **lua-term** isn't strictly required, but without it `module avail` output
+- **lua-term** isn't strictly required, but without it `module avail`
   defaults to 80 columns regardless of terminal width.
 - **lpeg** and **dkjson** are used by various Lmod internals. They're small
   and easy to include, so there's no good reason to skip them.
@@ -127,74 +104,52 @@ $PREFIX/
 │   ├── lua.h, luaconf.h, lualib.h, lauxlib.h
 │   └── luv.h
 ├── lib/
-│   ├── liblua.a         ─┐
-│   ├── liblua.so         │
-│   ├── libluaposix.a     │ static + shared libs
-│   ├── libluv.a          │ for luastatic / linking
-│   ├── libluv.so         │
-│   ├── libluv_libuv.a    │
-│   ├── liblfs.a          │
-│   ├── liblpeg.a         │
-│   ├── static-lua.a      │
-│   ├── static-lua.o      │
-│   ├── libluaterm.a     ─┘
-│   ├── lua/5.4/
-│   │   ├── posix.so     ─┐
-│   │   ├── posix/        │ shared modules loaded by
-│   │   │   └── sys/      │ the interpreter at runtime
-│   │   ├── luv.so        │
-│   │   ├── lfs.so        │
-│   │   ├── lpeg.so       │
-│   │   └── term/         │
-│   │       └── core.so  ─┘
+│   ├── liblua.a          ─┐
+│   ├── liblua.so          │
+│   ├── libluaposix.a      │ static + shared libs
+│   ├── libluv.a           │ for luastatic / linking
+│   ├── libluv.so          │
+│   ├── libluv_libuv.a     │
+│   ├── liblfs.a           │
+│   ├── liblpeg.a          │
+│   ├── libluaterm.a       │
+│   ├── static-lua.a       │ merged fat archive
+│   ├── static-lua.o      ─┘ merged relocatable object (preferred)
+│   ├── lua/<ver>/         # shared modules loaded at runtime
+│   │   ├── posix/ (+ sys/)
+│   │   ├── luv.so
+│   │   ├── lfs.so
+│   │   ├── lpeg.so
+│   │   └── term/core.so
 │   └── pkgconfig/
-│       └── lua5.4.pc
-└── share/lua/5.4/
-    ├── posix/           # pure-Lua parts of luaposix
-    ├── term/            # init.lua, cursor.lua, colors.lua
-    ├── re.lua           # regex module built on lpeg
-    └── dkjson.lua       # JSON library
+│       └── lua<ver>.pc
+└── share/lua/<ver>/
+    ├── posix/             # pure-Lua parts of luaposix
+    ├── term/              # init.lua, cursor.lua, colors.lua
+    ├── re.lua             # regex module built on lpeg
+    └── dkjson.lua         # JSON library
 ```
 
 ### Using with luastatic
 
+The simplest path is the merged artifacts produced by `make static-lua`:
+
 ```bash
 luastatic main.lua \
-  /opt/lua-regolith/lib/liblua.a \
-  /opt/lua-regolith/lib/libluaposix.a \
-  /opt/lua-regolith/lib/liblfs.a \
-  /opt/lua-regolith/lib/liblpeg.a \
-  /opt/lua-regolith/lib/libluaterm.a \
-  /opt/lua-regolith/lib/libluv.a \
-  /opt/lua-regolith/lib/libluv_libuv.a \
+  /opt/lua-regolith/lib/static-lua.o \
   -I/opt/lua-regolith/include \
   -lpthread -lm -ldl
 ```
 
-Include only the `.a` files for modules your script actually uses.
+`static-lua.o` is a single relocatable object (`ld -r` output), so every
+symbol is included unconditionally — no special linker flags needed. The
+`static-lua.a` fat archive is also installed for toolchains that expect
+`.a` files, but archives may need
+`-Wl,--whole-archive ... -Wl,--no-whole-archive` (Linux) or
+`-Wl,-force_load,...` (macOS) to pull in all symbols.
 
-> [!TIP]
-> Build the `static-lua` target, this will generate a `static-lua.a` fat
-> archive containing all the libraries above.
-
-If you build the fully static interpreter, then the `static-lua.a` archive is
-created for convenience. It contains all components used for the static
-interpreter (below). This simplifies the `luastatic` command:
-
-```
-luastatic main.lua \
-  /opt/lua-regolith/lib/static-lua.a \
-  -I/opt/lua-regolith/include \
-  -lpthread -lm -ldl
-```
-
-> [!NOTE]
-> In some cases the far archive won't get properly linked -- requiring extra
-> arguments (e.g. `luastatic main.lua ... -Wl,-force_load,/opt/lua-regolith/lib/static-lua.a ... `
-> on mac os; or `luastatic main.lua ... -Wl,--whole-archive /opt/lua-regolith/lib/static-lua.a -Wl,--no-whole-archive ...`
-> on linux -- to help with those cases, we provide a "raw" relocatable object:
-> `static-lua.o`
-
+You can also link individual module archives (`liblua.a`, `libluaposix.a`,
+`liblfs.a`, ...) — include only what your script actually requires.
 
 ### Fully Static Interpreter
 
@@ -205,14 +160,28 @@ make PREFIX=/opt/lua-regolith install
 
 Produces `$PREFIX/bin/lua-static` — the real `lua.c` interpreter (readline,
 `-e`, `-l`, `-i`, full REPL) with all C modules registered in
-`package.preload`. The pure-Lua modules (dkjson, term/*.lua, re.lua,
-posix/*.lua) still need to be on `LUA_PATH` or baked in via luastatic.
+`package.preload` and all pure-Lua modules (dkjson, term/*.lua, re.lua,
+posix/*.lua) embedded as byte arrays. It runs with **zero** external files.
 
 **Platform notes:**
 
-- **Linux (glibc)**: `-static` works; NSS caveats apply.
-  For clean static builds, build on Alpine (musl).
+- **Linux (glibc)**: `-static` works; NSS caveats apply. For clean static
+  builds, build on Alpine (musl).
 - **macOS**: Can't fully static-link; dynamically links libSystem.
+
+### Relocating an Install
+
+Only the Lua core embeds `PREFIX`; the C modules contain no hardcoded
+paths. To move an existing tree without a full rebuild:
+
+```bash
+make relocate PREFIX=/new/path
+make PREFIX=/new/path install
+```
+
+Or build with `RELOCATABLE=1`, which makes the interpreter resolve
+`package.path`/`package.cpath` relative to its own location at runtime —
+the whole prefix can then be moved freely (`cp -a`, `rsync`, `tar`).
 
 ---
 
@@ -221,7 +190,7 @@ posix/*.lua) still need to be on `LUA_PATH` or baked in via luastatic.
 | Module    | Type       | Purpose                                      |
 |-----------|------------|----------------------------------------------|
 | luaposix  | C + Lua    | POSIX bindings (required by Lmod)            |
-| luv       | C (cmake)  | libuv bindings for async I/O                 |
+| luv       | C          | libuv bindings for async I/O                 |
 | lfs       | C (1 file) | Filesystem operations (required by Lmod)     |
 | lpeg      | C          | PEG parsing library (used by Lmod)           |
 | lua-term  | C + Lua    | Terminal detection (used by Lmod for width)  |
@@ -236,54 +205,36 @@ top of PEG patterns. It's installed automatically.
 
 ### Requirements
 
-**Makefile** (full):
-- GCC or Clang (C99), GNU Make, CMake ≥ 3.10, wget
-- libreadline-dev, python3
-- POSIX system (Linux, macOS, \*BSD)
+**Makefile** (full): cc (C99), GNU make, cmake ≥ 3.10, wget,
+libreadline-dev. Any POSIX system — cmake handles platform detection.
 
-**Makefile.lite** (minimal):
-- GCC or Clang (C99), GNU Make, wget
-- libreadline-dev
-- Linux, macOS, or FreeBSD
+**Makefile.lite** (minimal): cc (C99), GNU make, wget, libreadline-dev.
+Linux, macOS, FreeBSD, or OpenBSD (use `gmake` on the BSDs).
 
 ```bash
 # Debian/Ubuntu (full)
-sudo apt install build-essential cmake wget libreadline-dev python3
+sudo apt install build-essential cmake wget libreadline-dev
 
-# Debian/Ubuntu (lite — no cmake or python3)
+# Debian/Ubuntu (lite — no cmake)
 sudo apt install build-essential wget libreadline-dev
 
 # Alpine (for fully static builds)
-apk add build-base cmake wget readline-dev readline-static linux-headers python3
-```
-
-### Makefile vs Makefile.lite
-
-If cmake isn't available (minimal HPC nodes, containers, locked-down
-environments), use `Makefile.lite`:
-
-```bash
-make -f Makefile.lite download
-make -f Makefile.lite PREFIX=/opt/lua-regolith all
-make -f Makefile.lite PREFIX=/opt/lua-regolith test
-make -f Makefile.lite PREFIX=/opt/lua-regolith install
+apk add build-base cmake wget readline-dev readline-static linux-headers
 ```
 
 Both Makefiles produce **identical install layouts** and are
-interchangeable — `make test` validates the same things either way.
+interchangeable — `make test` validates the same things either way. The
+only difference is how libuv and luv are built:
 
 | | `Makefile` | `Makefile.lite` |
 |---|---|---|
-| Build deps | cc, make, cmake, python3 | cc, make |
-| libuv build | cmake (auto platform detection) | Direct compilation (manual file list) |
-| luv build | cmake | Direct compilation |
-| linit.c patch | python3 | sed + tac |
-| Platform support | Any (cmake handles it) | Linux, macOS, FreeBSD |
+| Build deps | cc, make, cmake | cc, make |
+| libuv/luv build | cmake (auto platform detection) | direct compilation |
+| Platform support | any POSIX (cmake handles it) | Linux, macOS, FreeBSD, OpenBSD |
 
-The tradeoff with `Makefile.lite` is that libuv's platform-specific source
-file list is maintained in the Makefile rather than discovered by cmake.
-The list is stable across libuv 1.4x releases; if you bump to libuv 2.x,
-audit it against their `CMakeLists.txt`.
+The tradeoff: `Makefile.lite` maintains libuv's platform-specific source
+list by hand (in `mk/uv-source.mk`). It's stable within a libuv minor
+series; on a `LIBUV_VER` bump, diff it against the new `CMakeLists.txt`.
 
 ### Configuration Variables
 
@@ -291,61 +242,86 @@ audit it against their `CMakeLists.txt`.
 |---------------|--------------|-----------------------------------|
 | `PREFIX`      | `/usr/local` | Install location                  |
 | `RELOCATABLE` | `0`          | `1` = exe-relative package paths  |
-| `LUA_VER`     | `5.4.7`      | Lua version                       |
-| `LUAPOSIX_VER`| `36.2.1`     | luaposix version                  |
-| `LUV_VER`     | `1.48.0-2`   | luv version                       |
-| `LIBUV_VER`   | `1.48.0`     | libuv version                     |
+| `CC` / `AR` / `RANLIB` | gcc / ar / ranlib | Toolchain          |
+| `LUA_VER`     | `5.5.0`      | Lua version                       |
+| `LUAPOSIX_VER`| `36.3`       | luaposix version                  |
+| `LUV_VER`     | `1.52.1-0`   | luv version                       |
+| `LIBUV_VER`   | `1.52.1`     | libuv version                     |
 | `LFS_VER`     | `1.9.0`      | luafilesystem version             |
 | `LPEG_VER`    | `1.1.0`      | lpeg version                      |
 | `LUATERM_VER` | `0.8`        | lua-term version                  |
 | `DKJSON_VER`  | `2.8`        | dkjson version                    |
 
-`LUA_SHORT` (e.g. `5.4`) is derived automatically from `LUA_VER` — you
-don't need to set it separately.
+`LUA_SHORT` (e.g. `5.5`) is derived automatically from `LUA_VER` — you
+don't need to set it separately. SHA-256 checksums live next to the
+version numbers in `mk/common.mk` and must be updated together
+(`make verify` will tell you).
 
-### Smoke Tests
+### Tests
 
 ```bash
-make test
+make test        # comprehensive: test/test_bundled.lua
+make quicktest   # fast smoke test: test/test_quick.lua
 ```
 
-Tests every module: luaposix (including nested `posix.sys.stat`), luv
-(including event loop timer), lfs (dir listing, attributes), lpeg (pattern
-matching), lua-term (isatty function), and dkjson (JSON roundtrip).
+Both exercise every module: luaposix (including nested `posix.sys.stat`),
+luv (including an event-loop timer), lfs (dir listing, attributes), lpeg
+(pattern matching), lua-term (isatty function), and dkjson (JSON
+roundtrip). If the static interpreter has been built, it is tested too.
 
 ---
 
-## Version Resilience
+## Repository Layout & Build Internals
 
-The Makefile is designed to survive Lua version bumps (including to 5.5)
-without edits beyond changing `LUA_VER`. Three things that commonly break in
-version-pinned build systems are handled dynamically:
+```
+Makefile            # entry point: cmake-based libuv/luv build
+Makefile.lite       # entry point: cmake-free build
+mk/
+├── common.mk       # all shared build logic (~90% of the system)
+├── uv-cmake.mk     # libuv+luv via cmake
+└── uv-source.mk    # libuv+luv compiled directly; source lists live here
+scripts/            # POSIX sh helpers invoked by recipes
+├── verify-checksums.sh      # SHA-256 verification
+├── patch-luaconf.sh         # append PREFIX overrides to luaconf.h
+├── inject-after-openlibs.sh # insert preload/relocation calls into lua.c
+├── luaposix-config.sh       # autoconf-style feature probes -> HAVE_* header
+├── build-luaposix-so.sh     # .o -> .so paths derived from luaopen_* symbols
+├── luaposix-modules.sh      # discover pure-Lua luaposix modules
+├── compile-sources.sh       # batch-compile a source list (libuv, lite mode)
+├── merge-static.sh          # merge libs+objects -> static-lua.{a,o}
+├── gen-pkgconfig.sh         # emit lua<ver>.pc
+└── lua2c.sh                 # Lua sources -> C byte arrays for embedding
+src/                # C support code (preload registration, relocation)
+test/               # test_quick.lua, test_bundled.lua
+```
 
-**1. Source file list** — Instead of hardcoding the list of `.c` files, the
-Makefile uses `$(wildcard $(LUA_SRC)/*.c)` and filters out `lua.c` and
-`luac.c`. If Lua 5.5 adds or removes source files, they're picked up
-automatically.
+### Version Resilience
 
-**2. `luaconf.h` patching** — Instead of `sed`-matching internal formatting
-(which changes between releases), the Makefile appends `#undef` / `#define`
-overrides to the *end* of `luaconf.h`. The C preprocessor uses the last
-definition, so our `LUA_ROOT`, `LUA_PATH_DEFAULT`, and `LUA_CPATH_DEFAULT`
-always win, regardless of how the stock file is formatted.
+The build is designed to survive Lua version bumps without edits beyond
+`LUA_VER` (plus checksums). Things that commonly break in version-pinned
+build systems are handled dynamically:
 
-**3. Static interpreter's `linit.c`** — Instead of hardcoding the standard
-library opener table (`luaopen_base`, `luaopen_math`, etc.), the Makefile
-copies the real `linit.c` from the source tree and patches it with a small
-`python3` script (or `sed` in `Makefile.lite`) that inserts the
-`preload_bundled_modules()` call before the closing brace of
-`luaL_openlibs`. If Lua 5.5 adds a new standard library, it's included
-automatically.
+1. **Source file list** — the Lua core is compiled with a `*.c` glob and
+   `lua.o`/`luac.o` are removed afterward. New or removed source files are
+   picked up automatically.
+2. **`luaconf.h` patching** — `scripts/patch-luaconf.sh` *appends*
+   `#undef`/`#define` overrides rather than sed-matching internal
+   formatting. The preprocessor uses the last definition, so `LUA_ROOT`,
+   `LUA_PATH_DEFAULT`, and `LUA_CPATH_DEFAULT` always win regardless of
+   how the stock file changes between releases.
+3. **Interpreter patching** — `scripts/inject-after-openlibs.sh` anchors on
+   the openlibs *call site*, matching both `luaL_openlibs(L);` (Lua ≤ 5.4)
+   and `luai_openlibs(L);` (5.5), and fails loudly if the anchor moves.
+4. **Header installation** — all `.h` files in `src/` are installed
+   dynamically rather than from a hardcoded list.
+5. **luaposix feature detection** — `scripts/luaposix-config.sh` probes the
+   actual toolchain/headers (autoconf-style) instead of hardcoding a
+   platform matrix.
 
-**4. Header installation** — All `.h` and `.hpp` files in `src/` are
-installed dynamically rather than from a hardcoded list.
-
-**What still needs manual attention** when bumping to a new major Lua
-version: the C modules (luaposix, luv, lfs, lpeg, lua-term) must support
-that version's C API. Check their release notes.
+**What still needs manual attention** on a new major Lua version: the C
+modules (luaposix, luv, lfs, lpeg, lua-term) must support that version's
+C API — check their release notes. On a libuv bump, audit
+`mk/uv-source.mk` against upstream's `CMakeLists.txt`.
 
 ---
 
@@ -373,9 +349,9 @@ lpeg (MIT), lua-term (MIT), dkjson (MIT).
 
 - The AGPL is an OSI-approved open-source license. You may use
   `lua-regolith` commercially under the AGPL if you comply with its terms.
-- If you modify `lua-regolith` and run it to provide network access to users
-  (e.g., as a service), the AGPL includes obligations related to offering
-  the corresponding source code of the version you run.
+- If you modify `lua-regolith` and run it to provide network access to
+  users (e.g., as a service), the AGPL includes obligations related to
+  offering the corresponding source code of the version you run.
 - If your organization cannot or does not want to comply with the AGPL's
   requirements, you can obtain a commercial license.
 

@@ -1,11 +1,17 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # gen-pkgconfig.sh OUTPUT PREFIX LUA_SHORT LUA_VER LDFLAGS_LUA
 # ${prefix} etc. below are pkg-config variables, resolved when pkg-config
 # reads the file -- the backslash escapes keep them literal through the
 # expanding heredoc.  LDFLAGS_LUA is passed through rather than hardcoding
 # "-lm -ldl": OpenBSD has no libdl.
-set -eu
+#
+# This emits $PREFIX/lib/pkgconfig/lua5.5.pc — the file that lets other build
+# systems find your Lua installation without knowing anything about
+# lua-regolith. pkg-config is the Unix convention for "installed library,
+# describe thyself": autoconf's PKG_CHECK_MODULES, cmake's FindPkgConfig,
+# meson's dependency(), and plain Makefiles all consume it
+set -euo pipefail
 
 out=$1; prefix=$2; lua_short=$3; lua_ver=$4; ldflags=$5
 

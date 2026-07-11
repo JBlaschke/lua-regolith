@@ -1,8 +1,8 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # verify-checksums.sh FILE SHA256 [FILE SHA256]...
 # An empty SHA256 skips that file (useful for untested new upstream releases).
-set -eu
+set -euo pipefail
 
 if command -v sha256sum >/dev/null 2>&1; then
     SHA256_CMD="sha256sum"
