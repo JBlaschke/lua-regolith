@@ -21,7 +21,7 @@
 # get that underscore exploded into a slash. Three scripts, three lossy
 # transforms (_↔ / twice, /→_ once), all safe because luaposix and libuv
 # respectively never put the ambiguous character where it would bite.
-set -euo pipefail
+set -eu
 
 dir=$1
 [ -d "$dir/lib/posix" ] || exit 0

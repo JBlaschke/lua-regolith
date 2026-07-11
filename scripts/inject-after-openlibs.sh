@@ -12,7 +12,7 @@
 # below becomes a real newline inside awk.  Statements containing backslashes
 # would be mangled -- none of ours do, and the grep check below catches total
 # failure.
-set -euo pipefail
+set -eu
 
 src=$1; out=$2; shift 2
 

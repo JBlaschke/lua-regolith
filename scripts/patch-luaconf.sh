@@ -17,7 +17,7 @@
 #
 # Idempotent: any existing override block is stripped before appending.
 # --strip removes the block without appending (used by `make relocate`).
-set -euo pipefail
+set -eu
 
 # Append-only patching has one failure mode of its own: append twice and you
 # get two blocks — still functionally correct (last-wins means the second block

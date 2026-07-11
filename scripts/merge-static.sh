@@ -15,7 +15,7 @@
 #   -o  copy a single object
 #   -x  exclude objects by basename (posix.o: the monolithic module whose
 #       luaopen_* symbols duplicate the individual submodules')
-set -euo pipefail
+set -eu
 
 mode=$1; output=$2; shift 2
 : "${AR:=ar}"

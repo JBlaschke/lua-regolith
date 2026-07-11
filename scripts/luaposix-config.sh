@@ -29,7 +29,7 @@
 #   LPOSIX_2001_COMPLIANT: gates ctype.c, sched.c, sys/socket.c, parts of
 #   unistd.c (mirrors ext/include/_helpers.c).  Derived after <unistd.h> so
 #   _POSIX_VERSION is visible.
-set -euo pipefail
+set -eu
 # Note: commands in an || chain (except the last) are exempt from set -e, and a
 # function invoked as an if condition has -e suppressed throughout its body
 

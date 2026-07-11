@@ -10,7 +10,7 @@
 # its essence. The caller in mk/uv-source.mk hands it three things: a source
 # root (`(CURDIR)/(LIBUV_DIR)`), an output dir (`(BUILD)/libuv−obj‘),and then
 # the whole `LIBUV_SRC_ALL` list splatted onto the command line.
-set -euo pipefail
+set -eu
 
 srcroot=$1; objdir=$2; shift 2
 

@@ -11,7 +11,7 @@
 # lua-regolith. pkg-config is the Unix convention for "installed library,
 # describe thyself": autoconf's PKG_CHECK_MODULES, cmake's FindPkgConfig,
 # meson's dependency(), and plain Makefiles all consume it
-set -euo pipefail
+set -eu
 
 out=$1; prefix=$2; lua_short=$3; lua_ver=$4; ldflags=$5
 

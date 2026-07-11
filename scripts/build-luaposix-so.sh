@@ -20,7 +20,7 @@
 # Every underscore becomes a slash, unconditionally. It works because no
 # luaposix module has an underscore in its leaf name. If one ever appeared,
 # it'd be silently installed at the wrong depth, and require would miss it
-set -euo pipefail
+set -eu
 
 objdir=$1; outdir=$2
 

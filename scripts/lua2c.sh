@@ -68,8 +68,8 @@
 #
 # ============================================================================
 
-# Exit immediately if any command fails.
-set -e
+# Exit immediately if any command fails, or if variables are used but unset.
+set -eu
 
 # ---- Argument parsing -------------------------------------------------------
 #
