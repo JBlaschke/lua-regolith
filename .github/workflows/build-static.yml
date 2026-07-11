@@ -198,7 +198,6 @@ jobs:
             sh -c '
               set -eux
               ${{ matrix.deps }}
-              make -f ${{ matrix.makefile }} download
               make -f ${{ matrix.makefile }} PREFIX="$PREFIX" RELOCATABLE=1 all
               make -f ${{ matrix.makefile }} PREFIX="$PREFIX" RELOCATABLE=1 static-lua
               make -f ${{ matrix.makefile }} PREFIX="$PREFIX" RELOCATABLE=1 install
