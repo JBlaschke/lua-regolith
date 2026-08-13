@@ -79,7 +79,7 @@ NPROC       := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || ech
 # accidentally overriding LUA_VER would break the build in confusing ways.
 # Command-line overrides still work.
 
-LUA_VER       := 5.5.0
+LUA_VER       := 5.5.1
 LUAPOSIX_VER  := 36.3
 LUV_VER       := 1.52.1-0
 LIBUV_VER     := 1.52.1
@@ -93,7 +93,7 @@ DKJSON_VER    := 2.8
 
 # SHA-256, from upstream announcements / trusted package repos.  Update on
 # every version bump; set one to empty to skip verification for that file.
-LUA_SHA256      := 57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d
+LUA_SHA256      := 1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce
 LUAPOSIX_SHA256 := 82cd9a96c41a4a3205c050206f0564ff4456f773a8f9ffc9235ff8f1907ca5e6
 LUV_SHA256      := 3e6eb820a3aee034f85f9cce9bd77b5d42f34d128a1ccec877adf28c913577c7
 LIBUV_SHA256    := 478baf2599bfbc882c355288c9cb6f92e0e7dda435fa04031fa5b607cf3f414c
@@ -108,7 +108,6 @@ DKJSON_SHA256   := eb3bf160688fb395a2db6bc52eeff4f7855a6321d2b41bdc754554d13f4e7
 
 # "5.5" from "5.5.0" -- used for lib/lua/5.5, share/lua/5.5, etc.
 LUA_SHORT     := $(shell echo $(LUA_VER) | sed 's/\([0-9]*\.[0-9]*\).*/\1/')
-
 LUA_DIR       := lua-$(LUA_VER)
 LUA_URL       := https://www.lua.org/ftp/lua-$(LUA_VER).tar.gz
 # LUA_SRC must be defined *here*, not in section 1: the uv fragments'
